@@ -1307,7 +1307,8 @@ h2 {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  flex-direction: column;
   gap: 8px;
 }
 .bus-arrival > span:first-child {
@@ -1315,10 +1316,61 @@ h2 {
   color: #84948a;
 }
 .bus-arrival strong {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 600;
   color: #507ea7;
-  margin-left: auto;
+  margin-left: 0;
+}
+.bus-arrival-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bus-arrival small,
+.bus-feed-form small {
+  color: #7f8e85;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.bus-selector,
+.bus-feed-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 18px 0;
+  font-size: 11px;
+  color: #61786a;
+}
+.bus-selector select,
+.bus-feed-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: white;
+  color: #314b3d;
+}
+.bus-warning,
+.bus-empty {
+  color: #8f6c2d;
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 12px 0;
+}
+.bus-timetable {
+  font-size: 11px;
+  line-height: 1.9;
+  color: #61786a;
+  margin: 12px 0;
+}
+.bus-feed-form input {
+  font-size: 11px;
+}
+.data-modal {
+  max-height: 85dvh;
+  overflow-y: auto;
 }
 .bus-arrival strong small {
   font-size: 10px;

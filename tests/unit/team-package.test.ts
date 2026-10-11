@@ -21,6 +21,8 @@ describe("team package contents", () => {
       "test-results/trace.zip",
       "artifacts/dev.log",
       "tsconfig.tsbuildinfo",
+      "scripts/transit/__pycache__/collector.cpython-313.pyc",
+      "scripts/transit/collector.pyc",
     ])
       expect(safeSourcePath(path)).toBe(false);
     expect(safeSourcePath(".env.example")).toBe(true);
@@ -44,12 +46,18 @@ describe("team package contents", () => {
       await mkdir(join(directory, "src"));
       await mkdir(join(directory, "artifacts"));
       await mkdir(join(directory, "node_modules"));
+      await mkdir(join(directory, "public", "data"), { recursive: true });
+      await writeFile(join(directory, "public", "data", "whu-bus.json"), "{}");
       await writeFile(join(directory, "README.md"), "team");
       await writeFile(join(directory, "src", "page.tsx"), "export default 1;");
       await writeFile(join(directory, "src", ".env.local"), "do-not-ship");
       await writeFile(
         join(directory, "artifacts", "ui-desktop.png"),
         "preview-image",
+      );
+      await writeFile(
+        join(directory, "artifacts", "bus-mobile.png"),
+        "bus-preview-image",
       );
       await writeFile(
         join(directory, "artifacts", "dev-server.log"),
@@ -62,7 +70,9 @@ describe("team package contents", () => {
       const files = await collectSourceFiles(directory);
       expect(Object.keys(files).sort()).toEqual([
         "README.md",
+        "artifacts/bus-mobile.png",
         "artifacts/ui-desktop.png",
+        "public/data/whu-bus.json",
         "src/page.tsx",
       ]);
     } finally {

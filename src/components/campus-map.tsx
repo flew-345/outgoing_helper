@@ -13,13 +13,22 @@ import {
   X,
 } from "lucide-react";
 import {
-  busLine,
   campusBounds,
   incidents,
   places,
   type Place,
   type Route,
 } from "@/lib/campus";
+import type { BusLine } from "@/lib/bus";
+
+const escapeHtml = (value: string) =>
+  value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ]!,
+  );
 
 const routeColors = { walk: "#24745d", bus: "#3978be", bike: "#159a9a" };
 
@@ -28,6 +37,9 @@ export default function CampusMap({
   origin,
   destination,
   view,
+  busData,
+  busStatus,
+  showBusVehicles,
   onPick,
   onMessage,
 }: {
@@ -35,6 +47,9 @@ export default function CampusMap({
   origin: Place;
   destination: Place;
   view: string;
+  busData?: BusLine;
+  busStatus: string;
+  showBusVehicles: boolean;
   onPick: (place: Place) => void;
   onMessage: (message: string) => void;
 }) {
@@ -51,6 +66,11 @@ export default function CampusMap({
   const [locationBusy, setLocationBusy] = useState(false);
   const [baseMap, setBaseMap] = useState("light");
   const [mapZoom, setMapZoom] = useState(16);
+  // A new vehicle snapshot must not reset a user's map position.
+  const busBoundsKey = JSON.stringify(
+    busData?.stops.map((stop) => [stop.lat, stop.lng]) ?? [],
+  );
+  const busLineId = busData?.id;
   useEffect(() => {
     pickRef.current = onPick;
   }, [onPick]);
@@ -60,7 +80,7 @@ export default function CampusMap({
     const map = L.map(container.current, {
       zoomControl: false,
       attributionControl: false,
-      minZoom: 14,
+      minZoom: 12,
       maxZoom: 19,
     });
     map.on("zoomend", () => setMapZoom(map.getZoom()));
@@ -128,30 +148,41 @@ export default function CampusMap({
       marker.addTo(layer);
     });
     if (showBus) {
-      L.polyline(busLine, {
-        color: "#588bbd",
-        weight: 3,
-        opacity: 0.55,
-        dashArray: "6 8",
-      }).addTo(layer);
-      [
-        [30.5397, 114.3589],
-        [30.5446, 114.364],
-      ].forEach((point, index) => {
-        L.marker(point as [number, number], {
-          icon: L.divIcon({
-            className: "bus-marker",
-            html: `<span>校巴 ${index + 1}</span>`,
-            iconSize: [56, 28],
-            iconAnchor: [28, 14],
-          }),
-          title: "演示校巴位置",
-        })
-          .bindPopup(
-            "校巴 1 号线 · 演示位置<br>来源：本地演示数据<br>2026-10-10 09:30",
-          )
-          .addTo(layer);
-      });
+      if (busData?.path.length)
+        L.polyline(busData.path, {
+          color: "#588bbd",
+          weight: 3,
+          opacity: 0.55,
+          dashArray: "6 8",
+        }).addTo(layer);
+      if (showBusVehicles)
+        busData?.vehicles.forEach((vehicle) => {
+          L.marker([vehicle.lat, vehicle.lng], {
+            icon: L.divIcon({
+              className: "bus-marker",
+              html: `<span>${escapeHtml(vehicle.id)}</span>`,
+              iconSize: [56, 28],
+              iconAnchor: [28, 14],
+            }),
+            title: `${busData.name} · ${busStatus} · 车辆 ${vehicle.id}`,
+          })
+            .bindPopup(
+              `${escapeHtml(busData.name)} · ${escapeHtml(busStatus)}<br>车辆 ${escapeHtml(vehicle.id)}<br>来源：bus.whu.edu.cn<br>${escapeHtml(busData.vehiclesFetchedAt ?? "暂无读取时间")}<br>坐标按推断转换，尚未实地核验`,
+            )
+            .addTo(layer);
+        });
+      if (view === "bus")
+        busData?.stops.forEach((stop) => {
+          L.circleMarker([stop.lat, stop.lng], {
+            radius: 4,
+            color: "#3978be",
+            fillOpacity: 0.9,
+          })
+            .bindPopup(
+              `${stop.order}. ${escapeHtml(stop.name)}<br>来源：bus.whu.edu.cn`,
+            )
+            .addTo(layer);
+        });
       [
         [30.5391, 114.3578],
         [30.538, 114.3629],
@@ -207,7 +238,17 @@ export default function CampusMap({
           )
           .addTo(layer);
       });
-  }, [origin, destination, showBus, showIncidents, view, mapZoom]);
+  }, [
+    origin,
+    destination,
+    showBus,
+    showIncidents,
+    view,
+    mapZoom,
+    busData,
+    busStatus,
+    showBusVehicles,
+  ]);
 
   useEffect(() => {
     const layer = routeRef.current;
@@ -215,7 +256,12 @@ export default function CampusMap({
     if (!layer || !map) return;
     layer.clearLayers();
     if (view !== "route" || !route) {
-      map.fitBounds(campusBounds, { padding: [35, 35] });
+      const busPoints: [number, number][] = JSON.parse(busBoundsKey);
+      const bounds =
+        view === "bus" && busPoints.length
+          ? L.latLngBounds(busPoints)
+          : L.latLngBounds(campusBounds);
+      map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16 });
       return;
     }
     L.polyline(route.points, {
@@ -235,7 +281,7 @@ export default function CampusMap({
       L.marker([place.lat, place.lng], {
         icon: L.divIcon({
           className: `endpoint-marker ${index ? "destination-marker" : "origin-marker"}`,
-          html: `<span>${index ? "终" : "起"}</span><b>${place.name}</b>`,
+          html: `<span>${index ? "终" : "起"}</span><b>${escapeHtml(place.name)}</b>`,
           iconSize: [140, 42],
           iconAnchor: [21, 21],
         }),
@@ -248,7 +294,7 @@ export default function CampusMap({
       paddingTopLeft: [45, 100],
       paddingBottomRight: [80, 50],
     });
-  }, [route, origin, destination, view]);
+  }, [route, origin, destination, view, busBoundsKey, busLineId]);
 
   function locate() {
     if (!navigator.geolocation) {
@@ -337,7 +383,15 @@ export default function CampusMap({
         <button
           title="显示整个校园"
           aria-label="显示整个校园"
-          onClick={() => mapRef.current?.fitBounds(campusBounds)}
+          onClick={() =>
+            mapRef.current?.fitBounds(
+              view === "bus" && busData?.stops.length
+                ? L.latLngBounds(
+                    busData.stops.map((stop) => [stop.lat, stop.lng]),
+                  )
+                : campusBounds,
+            )
+          }
         >
           <RotateCcw size={18} />
         </button>

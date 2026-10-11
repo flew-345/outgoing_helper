@@ -24,6 +24,8 @@ const sourceFiles = [
   "playwright.config.ts",
   "artifacts/ui-desktop.png",
   "artifacts/ui-mobile.png",
+  "artifacts/bus-desktop.png",
+  "artifacts/bus-mobile.png",
 ];
 const excluded = new Set([
   "node_modules",
@@ -33,6 +35,7 @@ const excluded = new Set([
   "out",
   "test-results",
   "playwright-report",
+  "__pycache__",
 ]);
 
 export function safeSourcePath(path) {
@@ -43,7 +46,7 @@ export function safeSourcePath(path) {
         (part) =>
           excluded.has(part) ||
           (part.startsWith(".env") && part !== ".env.example"),
-      ) && !/\.(log|tsbuildinfo)$/.test(path)
+      ) && !/\.(log|tsbuildinfo|pyc)$/.test(path)
   );
 }
 
@@ -68,7 +71,7 @@ export async function collectSourceFiles(directory) {
       if (error.code !== "ENOENT") throw error;
     }
   }
-  for (const path of ["src", "tests", "docs", "scripts"]) {
+  for (const path of ["src", "tests", "docs", "scripts", "public"]) {
     try {
       await collectFiles(join(directory, path), path, files);
     } catch (error) {

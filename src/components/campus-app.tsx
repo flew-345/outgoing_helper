@@ -31,7 +31,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  busStops,
   DEMO_TIME,
   formatDistance,
   incidents,
@@ -44,6 +43,7 @@ import {
   type Place,
   type Route,
 } from "@/lib/campus";
+import { arrivalsAt, useTransitFeed, vehicleFreshness } from "@/lib/bus";
 
 const CampusMap = dynamic(() => import("./campus-map"), {
   ssr: false,
@@ -201,6 +201,31 @@ export default function CampusApp() {
   );
   const [dataOpen, setDataOpen] = useState(false);
   const [busLineView, setBusLineView] = useState("线路");
+  const feed = useTransitFeed();
+  const [busLineId, setBusLineId] = useState("");
+  const [busTarget, setBusTarget] = useState(1);
+  const [feedAddress, setFeedAddress] = useState("");
+  const busData =
+    feed.snapshot?.lines.find((line) => line.id === busLineId) ??
+    feed.snapshot?.lines[0];
+  const targetStop =
+    busData?.stops.find((stop) => stop.order === busTarget) ??
+    busData?.stops[0];
+  const busFreshness = vehicleFreshness(
+    feed.snapshot,
+    busData,
+    feed.now,
+    Boolean(feed.error),
+  );
+  const busStatus = feed.loading
+    ? "校巴数据加载中"
+    : busFreshness === "fresh"
+      ? "车辆状态已更新"
+      : busFreshness === "stale"
+        ? "车辆历史快照 · 已过期"
+        : "实时状态不可用";
+  const busArrivals =
+    busData && targetStop ? arrivalsAt(busData, targetStop.order) : [];
   const selectedRoute = routes.find((r) => r.mode === selectedMode);
   const fastest = recommendRoute(routes);
   const saved = favorites.includes(destination.id);
@@ -314,14 +339,16 @@ export default function CampusApp() {
     if (parsed.origin && parsed.destination) {
       const options = planRoutes(parsed.origin, parsed.destination);
       const walk = options.find((r) => r.mode === "walk")!;
-      reply = `从${parsed.origin.name}到${parsed.destination.name}，步行估算 ${walk.minutes} 分钟，约 ${formatDistance(walk.distance)}。${walk.affected ? "樱园路有演示施工记录，示意路线已调整。" : "步行无需候车。"}校巴和电动车状态尚未接入，出发前请核实。来源：本地演示数据，${DEMO_TIME}；路线仅供 UI 预览。`;
+      reply = `从${parsed.origin.name}到${parsed.destination.name}，步行估算 ${walk.minutes} 分钟，约 ${formatDistance(walk.distance)}。${walk.affected ? "樱园路有演示施工记录，示意路线已调整。" : "步行无需候车。"}校巴行程耗时仍为估算，电动车状态尚未接入，出发前请核实。来源：本地演示数据，${DEMO_TIME}；路线仅供 UI 预览。`;
       setOrigin(parsed.origin);
       setDestination(parsed.destination);
       calculate(parsed.origin, parsed.destination);
     } else if (/管制|施工|封路/.test(text)) {
       reply = `演示管制记录：${incidents.map((i) => `${i.title}（${i.time}）`).join("；")}。来源：本地演示数据，${DEMO_TIME}。这些记录不代表校园当前实际管制。`;
     } else if (/校巴|等车|骑车/.test(text)) {
-      reply = `当前行程步行估算 ${routes.find((r) => r.mode === "walk")?.minutes ?? "--"} 分钟。校巴到站和车辆数量都是演示数据，无法据此判断实际是否适合等车或骑车。没有实时信息时，步行是可自行执行的备用方案。来源：本地演示数据，${DEMO_TIME}。`;
+      reply = busData
+        ? `${busData.name}，${targetStop?.name}：${busStatus}。${busFreshness === "unavailable" ? "暂无可用车辆状态。" : busArrivals.map((item) => `车辆 ${item.vehicle.id} ${item.label}`).join("；") || "该站次暂无候选车。"}来源：bus.whu.edu.cn，车辆读取时间 ${busData.vehiclesFetchedAt ?? "暂无"}。接口未提供抵达分钟数；电动车仍为演示数据，无法据此比较实际等车与骑车耗时。`
+        : `校巴${busStatus}，暂时无法判断候车情况。电动车仍为演示数据；可查看步行示意方案。`;
     } else {
       reply =
         "暂时没有识别出完整行程。可查询桂园宿舍、第一教学楼、总图书馆、樱顶老图书馆、梅园食堂、珞珈门、工学部教学楼和凌波门，或查询道路管制。";
@@ -593,7 +620,11 @@ export default function CampusApp() {
               <section className="bus-section">
                 <div className="section-title">
                   <h2>校园校巴</h2>
-                  <span className="small-tag">1 条演示线路</span>
+                  <span className="small-tag">
+                    {feed.snapshot
+                      ? `${feed.snapshot.lines.length} 个线路方向`
+                      : busStatus}
+                  </span>
                 </div>
                 <div className="segmented-control">
                   {["线路", "站点"].map((tab) => (
@@ -607,63 +638,166 @@ export default function CampusApp() {
                     </button>
                   ))}
                 </div>
-                <div className="bus-line-title">
-                  <span className="mode-icon bus">
-                    <Bus size={22} />
-                  </span>
-                  <div>
-                    <h3>校园 1 号线</h3>
-                    <p>
-                      珞珈门 <ArrowRight size={12} /> 凌波门
-                    </p>
-                  </div>
-                </div>
-                <div className="bus-operating">
-                  <span>
-                    <Clock3 size={14} />
-                    07:00 — 21:30
-                  </span>
-                  <span>演示时刻</span>
-                </div>
-                <div className="bus-arrival">
-                  <span>桂园站 · 下一班</span>
-                  <strong>
-                    约 5 <small>分钟</small>
-                  </strong>
-                  <span className="small-tag">模拟到站</span>
-                </div>
-                <div className="bus-stop-list">
-                  {busStops.map((stop, index) => (
-                    <div className="bus-stop" key={stop.id}>
-                      <span className="bus-stop-dot" />
-                      <span>
-                        <strong>{stop.name}</strong>
-                        {busLineView === "站点" && <small>{stop.area}</small>}
-                      </span>
-                      {index === 1 && (
-                        <span className="station-tag">演示车辆附近</span>
-                      )}
-                      <button
-                        className="icon-button"
-                        title={`前往${stop.name}`}
-                        aria-label={`前往${stop.name}`}
-                        onClick={() => pickDestination(stop)}
+                {busData && (
+                  <>
+                    <label className="bus-selector">
+                      线路与方向
+                      <select
+                        aria-label="校巴线路与方向"
+                        value={busData.id}
+                        onChange={(event) => {
+                          setBusLineId(event.target.value);
+                          setBusTarget(1);
+                        }}
                       >
-                        <ArrowRight size={16} />
-                      </button>
+                        {feed.snapshot?.lines.map((line) => (
+                          <option key={line.id} value={line.id}>
+                            {line.name} · {line.stops[0].name} →{" "}
+                            {line.stops.at(-1)?.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="bus-line-title">
+                      <span className="mode-icon bus">
+                        <Bus size={22} />
+                      </span>
+                      <div>
+                        <h3>{busData.name}</h3>
+                        <p>
+                          {busData.stops[0].name} <ArrowRight size={12} />{" "}
+                          {busData.stops.at(-1)?.name}
+                        </p>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                    <div className="bus-operating">
+                      <span>
+                        <Clock3 size={14} />
+                        {busData.firstTime || "--"} — {busData.lastTime || "--"}
+                      </span>
+                      <span>接口运营时间 · 票价待核实</span>
+                    </div>
+                    <label className="bus-selector">
+                      查看到站站次
+                      <select
+                        aria-label="校巴目标站次"
+                        value={targetStop?.order ?? 1}
+                        onChange={(event) =>
+                          setBusTarget(Number(event.target.value))
+                        }
+                      >
+                        {busData.stops.map((stop) => (
+                          <option key={stop.occurrenceId} value={stop.order}>
+                            {stop.order}. {stop.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="bus-arrival">
+                      <span>
+                        {targetStop?.name} · {busStatus}
+                      </span>
+                      {busFreshness === "unavailable" ? (
+                        <strong>暂无车辆状态</strong>
+                      ) : busArrivals.length ? (
+                        busArrivals.map(({ vehicle, label }) => (
+                          <div className="bus-arrival-row" key={vehicle.id}>
+                            <strong>{label}</strong>
+                            <small>
+                              车辆 {vehicle.id}
+                              {busFreshness === "stale" ? " · 历史状态" : ""}
+                            </small>
+                          </div>
+                        ))
+                      ) : (
+                        <strong>
+                          {busData.vehicles.length
+                            ? "该站次暂无候选车"
+                            : "本次响应无车辆"}
+                        </strong>
+                      )}
+                      <small>站数由站序计算；接口未提供抵达分钟数。</small>
+                    </div>
+                    <div className="bus-stop-list">
+                      {busData.stops.map((stop) => (
+                        <div className="bus-stop" key={stop.occurrenceId}>
+                          <span className="bus-stop-dot" />
+                          <span>
+                            <strong>
+                              {stop.order}. {stop.name}
+                            </strong>
+                            {busLineView === "站点" && (
+                              <small>{stop.area}</small>
+                            )}
+                          </span>
+                          {stop.order === targetStop?.order && (
+                            <span className="station-tag">目标站次</span>
+                          )}
+                          <button
+                            className="icon-button"
+                            title={`前往${stop.name}`}
+                            aria-label={`前往${stop.name}`}
+                            onClick={() =>
+                              pickDestination({
+                                ...stop,
+                                id: stop.occurrenceId,
+                              })
+                            }
+                          >
+                            <ArrowRight size={16} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {busData.timetable.length > 0 && (
+                      <details className="bus-timetable">
+                        <summary>页面班次表</summary>
+                        {busData.timetable.map((entry, index) => (
+                          <p key={index}>
+                            {entry.time} · {entry.from} → {entry.to}
+                          </p>
+                        ))}
+                      </details>
+                    )}
+                    {busData.warnings.map((warning, index) => (
+                      <p className="bus-warning" key={index}>
+                        {warning}
+                      </p>
+                    ))}
+                  </>
+                )}
+                {!busData && (
+                  <p className="bus-empty" role="status">
+                    {busStatus}。读取成功后显示线路与站次。
+                  </p>
+                )}
+                {feed.error && (
+                  <p className="bus-warning" role="status">
+                    读取失败：{feed.error}。
+                    {feed.snapshot
+                      ? "保留上次成功数据，车辆状态已标为历史快照。"
+                      : "暂时无法显示车辆位置。"}
+                  </p>
+                )}
                 <div className="data-footnote">
                   <Info size={15} />
                   <p>
-                    线路、站点、运营时间及车辆位置均为演示数据。实际线路与票价待校方确认。
+                    来源：武大校巴页面接口。站点与车辆坐标按高德坐标推断转换，尚未实地核验；线路规划仍为演示估算。
                   </p>
                 </div>
                 <div className="source-line">
-                  来源：本地演示数据
+                  {busStatus}
                   <br />
-                  数据时间：{DEMO_TIME}
+                  车辆读取：
+                  {busData?.vehiclesFetchedAt
+                    ? new Date(busData.vehiclesFetchedAt).toLocaleString(
+                        "zh-CN",
+                        { timeZone: "Asia/Shanghai" },
+                      )
+                    : "暂无"}
+                  （北京时间）
+                  <br />每 10 秒读取；超过 30
+                  秒显示历史快照。可在“数据说明”设置数据来源。
                 </div>
               </section>
             )}
@@ -762,6 +896,9 @@ export default function CampusApp() {
               origin={journey.origin}
               destination={journey.destination}
               view={view}
+              busData={busData}
+              busStatus={busStatus}
+              showBusVehicles={busFreshness !== "unavailable"}
               onPick={pickDestination}
               onMessage={notify}
             />
@@ -811,17 +948,21 @@ export default function CampusApp() {
                   <div>
                     <div className="detail-place-names">
                       <strong>
-                        {view === "bus" ? "校园 1 号线" : "校园管制区域"}
+                        {view === "bus"
+                          ? (busData?.name ?? "校园校巴")
+                          : "校园管制区域"}
                       </strong>
                     </div>
                     <p>
                       {view === "bus"
-                        ? "6 个演示站点 · 车辆位置非实时"
+                        ? `${busData?.stops.length ?? 0} 个站次 · ${busStatus}`
                         : "2 条演示记录 · 有效时间以各条公告为准"}
                     </p>
                   </div>
                 </div>
-                <span className="small-tag">本地演示数据</span>
+                <span className="small-tag">
+                  {view === "bus" ? "bus.whu.edu.cn" : "本地演示数据"}
+                </span>
               </div>
             )}
             <div className="map-statusbar">
@@ -831,7 +972,7 @@ export default function CampusApp() {
               </span>
               <span>
                 <Clock3 size={11} />
-                演示数据 {DEMO_TIME}
+                {view === "bus" ? busStatus : `演示数据 ${DEMO_TIME}`}
               </span>
             </div>
           </section>
@@ -894,7 +1035,9 @@ export default function CampusApp() {
               <ShieldCheck size={27} />
             </span>
             <h2 id="data-title">数据来源与状态</h2>
-            <p>当前为 UI 审查版本，校园出行状态尚未接入实时服务。</p>
+            <p>
+              校巴读取独立数据源；地点、道路规划、电动车和管制仍为演示数据。
+            </p>
             <dl>
               <div>
                 <dt>地图底图</dt>
@@ -909,7 +1052,15 @@ export default function CampusApp() {
                 <dd>距离估算 · 非实际道路导航</dd>
               </div>
               <div>
-                <dt>校巴 / 电动车</dt>
+                <dt>校巴</dt>
+                <dd>
+                  bus.whu.edu.cn · {busStatus}。车辆状态超过 30
+                  秒标为历史快照；坐标按 GCJ-02 推断转换为近似
+                  WGS84，尚未实地核验。
+                </dd>
+              </div>
+              <div>
+                <dt>电动车</dt>
                 <dd>演示数据 · 实时状态不可用</dd>
               </div>
               <div>
@@ -925,6 +1076,32 @@ export default function CampusApp() {
                 <dd>仅限预览，不作为实际出行依据</dd>
               </div>
             </dl>
+            <form
+              className="bus-feed-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                try {
+                  feed.configure(feedAddress);
+                  notify("已切换校巴数据来源。");
+                } catch (error) {
+                  notify(
+                    error instanceof Error ? error.message : "数据地址无效",
+                  );
+                }
+              }}
+            >
+              <label htmlFor="bus-feed-url">校巴数据地址</label>
+              <input
+                id="bus-feed-url"
+                value={feedAddress}
+                placeholder={feed.url}
+                onChange={(event) => setFeedAddress(event.target.value)}
+              />
+              <small>留空恢复随包快照；填写采集服务地址可持续更新。</small>
+              <button type="submit" className="search-button">
+                应用数据地址
+              </button>
+            </form>
             <button
               className="search-button"
               onClick={() => setDataOpen(false)}

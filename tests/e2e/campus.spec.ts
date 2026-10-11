@@ -1,4 +1,80 @@
 import { expect, test } from "@playwright/test";
+import type { TransitSnapshot } from "../../src/lib/bus";
+
+function transitFixture(): TransitSnapshot {
+  const now = new Date().toISOString();
+  return {
+    schemaVersion: 1,
+    source: "bus.whu.edu.cn",
+    fetchedAt: now,
+    coordinateSystem: "amap-gcj02-inferred",
+    displayCoordinateSystem: "wgs84-approximate",
+    lines: [
+      ["10486-50-0", "1号线", 20],
+      ["10486-55-0", "2号线", 15],
+      ["10486-56-0", "5号线", 5],
+      ["10486-56-1", "5号线返向", 5],
+    ].map(([rawId, rawName, rawCount]) => {
+      const id = String(rawId);
+      const count = Number(rawCount);
+      return {
+        id,
+        name: String(rawName),
+        direction: id.endsWith("-1") ? 1 : 0,
+        returnLineId: id === "10486-56-0" ? "10486-56-1" : null,
+        firstTime: "07:20",
+        lastTime: "22:40",
+        priceRaw: "1.0~2.0",
+        stops: Array.from({ length: count }, (_, i) => ({
+          occurrenceId: `${id}:${i + 1}`,
+          sourceStopId: String(i + 1),
+          order: i + 1,
+          name:
+            i === 14
+              ? "田园食堂"
+              : i === 0 || i === count - 1
+                ? "珞珈门"
+                : `校巴站${i + 1}`,
+          area: "校园校巴",
+          aliases: [],
+          lat: 30.53 + i * 0.0005,
+          lng: 114.36,
+          sourceLat: 30.53 + i * 0.0005,
+          sourceLng: 114.36,
+        })),
+        path: [
+          [30.53, 114.36],
+          [30.54, 114.36],
+        ],
+        vehiclesFetchedAt: now,
+        vehicleStatus: "fresh",
+        vehicles:
+          id === "10486-50-0"
+            ? [4, 9, 16].map((stopOrder) => ({
+                id: `vehicle-${stopOrder}`,
+                lineId: id,
+                stopOrder,
+                arrivalState: "0",
+                lat: 30.53 + stopOrder * 0.0005,
+                lng: 114.36,
+                sourceLat: 30.53 + stopOrder * 0.0005,
+                sourceLng: 114.36,
+                rawFields: [],
+              }))
+            : [],
+        warnings: [],
+        timetable: [],
+        rawMetadata: {},
+      };
+    }),
+  };
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.route("**/data/whu-bus.json", (route) =>
+    route.fulfill({ json: transitFixture() }),
+  );
+});
 
 test("renders the campus workspace and switches transport details", async ({
   page,
@@ -82,10 +158,18 @@ test("navigates bus and filtered notices, then plans from an incident", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "校园校巴", exact: true }).click();
-  await expect(page.locator(".bus-stop")).toHaveCount(6);
-  await expect(page.locator(".bus-arrival")).toContainText("模拟到站");
+  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await page.getByRole("combobox", { name: "校巴目标站次" }).selectOption("15");
+  await expect(page.locator(".bus-arrival")).toContainText("6 站后");
+  await expect(page.locator(".bus-arrival")).toContainText("11 站后");
+  await expect(page.locator(".bus-arrival")).not.toContainText("模拟到站");
   await page.getByRole("button", { name: "站点", exact: true }).click();
   await expect(page.locator(".bus-stop small").first()).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "校巴线路与方向" })
+    .selectOption("10486-56-1");
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
+  await expect(page.locator(".bus-arrival")).toContainText("本次响应无车辆");
   await page.getByRole("button", { name: "出行公告", exact: true }).click();
   await page.getByRole("button", { name: "限行", exact: true }).click();
   await expect(page.locator(".notice-item")).toHaveCount(1);
@@ -95,6 +179,87 @@ test("navigates bus and filtered notices, then plans from an incident", async ({
     page.getByRole("heading", { name: "下一站，去哪里？" }),
   ).toBeVisible();
   await expect(page.locator(".journey-detail")).toContainText("工学部教学楼");
+});
+
+test("marks old snapshots stale and keeps last good data after a failed refresh", async ({
+  page,
+}) => {
+  const fixture = transitFixture();
+  fixture.fetchedAt = new Date(Date.now() - 120000).toISOString();
+  for (const line of fixture.lines) line.vehiclesFetchedAt = fixture.fetchedAt;
+  let failRefresh = false;
+  await page.route("**/data/whu-bus.json", (route) =>
+    failRefresh
+      ? route.fulfill({ status: 503 })
+      : route.fulfill({ json: fixture }),
+  );
+  await page.clock.install();
+  await page.goto("/");
+  await page.getByRole("button", { name: "校园校巴", exact: true }).click();
+  await expect(page.locator(".source-line")).toContainText("已过期");
+  failRefresh = true;
+  await page.clock.fastForward(11000);
+  await expect(page.locator(".bus-warning")).toContainText("503");
+  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".source-line")).toContainText("历史快照");
+});
+
+test("shows unavailable data without simulated buses when import fails", async ({
+  page,
+}) => {
+  await page.route("**/data/whu-bus.json", (route) =>
+    route.fulfill({ json: { schemaVersion: 999 } }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "校园校巴", exact: true }).click();
+  await expect(page.locator(".bus-empty")).toContainText("实时状态不可用");
+  await expect(page.locator(".bus-stop")).toHaveCount(0);
+  await expect(page.locator(".bus-marker")).toHaveCount(0);
+});
+
+test("loads a configured data service and preserves the setting", async ({
+  page,
+}) => {
+  let requests = 0;
+  await page.route("http://127.0.0.1:8766/api/transit", (route) => {
+    requests++;
+    return route.fulfill({ json: transitFixture() });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "数据说明", exact: true }).click();
+  await page
+    .getByLabel("校巴数据地址")
+    .fill("http://127.0.0.1:8766/api/transit");
+  await page.getByRole("button", { name: "应用数据地址" }).click();
+  await expect.poll(() => requests).toBeGreaterThan(0);
+  await page.reload();
+  await expect.poll(() => requests).toBeGreaterThan(1);
+  await page.getByRole("button", { name: "校园校巴", exact: true }).click();
+  await expect(page.locator(".bus-stop")).toHaveCount(20);
+});
+
+test("preserves the map zoom when the same line refreshes vehicles", async ({
+  page,
+}) => {
+  let requests = 0;
+  await page.route("**/data/whu-bus.json", (route) => {
+    requests++;
+    return route.fulfill({ json: transitFixture() });
+  });
+  await page.clock.install();
+  await page.goto("/");
+  await page.getByRole("button", { name: "校园校巴", exact: true }).click();
+  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".leaflet-proxy")).toHaveCount(1);
+  await page.getByRole("button", { name: "放大地图", exact: true }).click();
+  await page.clock.runFor(1000);
+  const transform = await page.locator(".leaflet-proxy").getAttribute("style");
+  await page.clock.fastForward(11000);
+  await expect.poll(() => requests).toBeGreaterThan(1);
+  await expect(page.locator(".leaflet-proxy")).toHaveAttribute(
+    "style",
+    transform!,
+  );
 });
 
 test("answers a local journey query with provenance", async ({ page }) => {
@@ -143,6 +308,20 @@ test("captures a complete desktop or mobile UI preview", async ({
   await page.waitForTimeout(1500);
   await page.screenshot({
     path: `artifacts/ui-${testInfo.project.name}.png`,
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "校园校巴", exact: true }).click();
+  await page.getByRole("combobox", { name: "校巴目标站次" }).selectOption("15");
+  await expect(page.locator(".bus-arrival")).toContainText("6 站后");
+  await page.evaluate(() => {
+    const label = document.createElement("div");
+    label.textContent = "自动化测试数据 · 非实时校巴快照";
+    label.style.cssText =
+      "position:fixed;bottom:0;left:0;right:0;background:#fff1c7;color:#5b4014;padding:8px;text-align:center;z-index:99999;font-size:12px";
+    document.body.append(label);
+  });
+  await page.screenshot({
+    path: `artifacts/bus-${testInfo.project.name}.png`,
     fullPage: true,
   });
   const bounds = await page.locator(".map-surface").boundingBox();
