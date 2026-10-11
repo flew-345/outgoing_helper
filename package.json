@@ -1,0 +1,43 @@
+{
+  "name": "luojia-transit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "package:team": "node scripts/package-team.mjs",
+    "preview": "node scripts/preview-server.mjs --root out",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.468.0",
+    "next": "^16.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.56.0",
+    "@tailwindcss/postcss": "^4.1.0",
+    "@types/leaflet": "^1.9.20",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "eslint": "^9.35.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
+    "fflate": "^0.8.2",
+    "prettier": "^3.6.2",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^5.0.3"
+  }
+}

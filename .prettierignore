@@ -1,0 +1,13 @@
+node_modules
+.next
+next-env.d.ts
+package-lock.json
+artifacts
+playwright-report
+test-results
+coverage
+AGENTS.md
+docs
+out
+releases
+scripts/licenses
