@@ -2171,3 +2171,26 @@ h2 {
     scroll-behavior: auto !important;
   }
 }
+.road-steps {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #53685b;
+}
+.road-steps summary {
+  cursor: pointer;
+}
+.road-steps ol {
+  max-height: 210px;
+  overflow-y: auto;
+  padding-left: 22px;
+  line-height: 1.8;
+}
+.road-credit {
+  margin-top: 12px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #7b8d81;
+}
+.road-credit a {
+  text-decoration: underline;
+}

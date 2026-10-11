@@ -1,3 +1,5 @@
+import graphData from "../../public/data/campus-roads.json";
+import { parseRoadGraph } from "../../src/lib/road-router";
 import { describe, expect, it } from "vitest";
 import {
   distanceMeters,
@@ -17,7 +19,7 @@ describe("campus place lookup", () => {
     expect(searchPlaces("")).toHaveLength(places.length);
   });
   it("extracts endpoints in sentence order and does not duplicate aliases", () => {
-    expect(parseJourney("从桂园到总图书馆怎么走")).toEqual({
+    expect(parseJourney("从桂园到工学部图书馆怎么走")).toEqual({
       origin: places[0],
       destination: places[2],
     });
@@ -38,40 +40,25 @@ describe("campus place lookup", () => {
   });
 });
 
-describe("preview route estimates", () => {
-  it("includes every access, wait and travel segment in total time", () => {
-    const routes = planRoutes(places[0], places[1]);
-    expect(routes.map((r) => r.mode)).toEqual(["walk", "bus", "bike"]);
+describe("road route estimates", () => {
+  const graph = parseRoadGraph(graphData);
+  it("calculates distance from road geometry and uses declared speeds", () => {
+    const routes = planRoutes(places[0], places[1], graph);
+    expect(routes.map((r) => r.mode)).toEqual(["walk", "bike"]);
     for (const route of routes) {
-      expect(route.minutes).toBe(
-        route.segments.reduce((sum, segment) => sum + segment.minutes, 0),
-      );
+      expect(route.minutes).toBeGreaterThan(0);
       expect(route.points[0]).toEqual([places[0].lat, places[0].lng]);
       expect(route.points.at(-1)).toEqual([places[1].lat, places[1].lng]);
+      expect(route.points.length).toBeGreaterThan(4);
+      expect(route.steps.length).toBeGreaterThan(2);
     }
+    expect(recommendRoute(routes)?.minutes).toBe(
+      Math.min(...routes.map((r) => r.minutes!)),
+    );
   });
   it("avoids a journey to the same place", () => {
-    expect(planRoutes(places[0], places[0])).toEqual([]);
+    expect(planRoutes(places[0], places[0], graph)).toEqual([]);
     expect(recommendRoute([])).toBeUndefined();
-  });
-  it("flags and adjusts the preview route affected by construction", () => {
-    const forward = planRoutes(places[0], places[3]);
-    const reverse = planRoutes(places[3], places[0]);
-    expect(forward.every((r) => r.affected)).toBe(true);
-    expect(reverse.every((r) => r.affected)).toBe(true);
-    expect(forward[0].distance).toBeGreaterThan(
-      distanceMeters(places[0], places[3]) * 1.35,
-    );
-    expect(planRoutes(places[0], places[1]).some((r) => r.affected)).toBe(
-      false,
-    );
-  });
-  it("selects the shortest estimate without reordering the displayed options", () => {
-    const routes = planRoutes(places[0], places[1]);
-    expect(recommendRoute(routes)?.minutes).toBe(
-      Math.min(...routes.map((r) => r.minutes)),
-    );
-    expect(routes[0].mode).toBe("walk");
   });
   it("handles distance formatting and identical coordinates", () => {
     expect(distanceMeters(places[0], places[0])).toBe(0);

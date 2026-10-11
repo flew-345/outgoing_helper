@@ -81,7 +81,7 @@ TypeScript 结构和运行时校验见 `src/lib/bus.ts`，实际导入样本见 
 
 站点和车辆保留 `sourceLat/sourceLng`；显示坐标为 `lat/lng`，轨迹为 `[lat,lng]`。官方 H5 直接使用高德地图，因此推断上游为 GCJ-02，并近似转换到 Esri/Leaflet 所需的 WGS84。上游没有明确声明坐标系，这不是校方确认；不能用于精确导航。[高德坐标说明](https://lbs.amap.com/api/javascript-api/guide/transform/convertfrom)。
 
-5 号线接口运营时间与官方 H5 内置时刻表存在冲突，分别保留并提示；内置时刻表未验证是当前运营计划。`priceRaw` 保留上游字符串，不当作已核实票价。地点、步行/骑行路线、公告与问答仍为原有演示数据，校巴接入不改变这些数据的可靠性。
+5 号线接口运营时间与官方 H5 内置时刻表存在冲突，分别保留并提示；内置时刻表未验证是当前运营计划。`priceRaw` 保留上游字符串，不当作已核实票价。步行与自行车已接入 OSM 真实道路寻路，地点来源和接入段限制见 [自有路线规划说明](ROAD-ROUTING.md)。公告仍为演示数据，不参与路线避障。
 
 `vehicleStatus` 为 `fresh/stale/unavailable`。请求失败保留原车辆及原车辆时间，并标记 stale；初次失败标记 unavailable；成功空数组才表示本次无车辆。页面根据时间再次判断，HTTP 200 不会让旧文件重新变新。服务端原子替换 JSON，避免页面读到半个文件。
 

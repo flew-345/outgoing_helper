@@ -76,6 +76,90 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
+test("shows real road steps and an optional external navigation link", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator(".demo-status")).toHaveText("道路寻路");
+  await expect(page.getByRole("button", { name: /全程步行/ })).toBeVisible();
+  await page.locator(".road-steps summary").click();
+  await expect(page.locator(".road-steps")).toContainText("沿");
+  await expect(page.locator(".road-steps")).toContainText("入口需核实");
+  await expect(
+    page.getByRole("link", { name: "在高德查看同起终点路线", exact: true }),
+  ).toHaveAttribute("href", /uri\.amap\.com\/navigation\?.*mode=walk/);
+  await page.getByRole("button", { name: /自行车骑行/ }).click();
+  await expect(page.getByRole("link", { name: /骑行需手机/ })).toHaveAttribute(
+    "href",
+    /mode=ride/,
+  );
+});
+
+test("does not manufacture routes when the road extract fails", async ({
+  page,
+}) => {
+  await page.route("**/data/campus-roads.json", (route) =>
+    route.fulfill({ status: 503 }),
+  );
+  await page.goto("/");
+  await expect(page.locator(".demo-status")).toHaveText("路网未连接");
+  await expect(page.locator(".route-list")).toContainText("503");
+  await expect(page.locator(".route-option")).toHaveCount(0);
+  await expect(page.locator(".endpoint-marker")).toHaveCount(0);
+});
+
+test("uses browser location as a real planning origin", async ({ page }) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(navigator, "geolocation", {
+      value: {
+        getCurrentPosition: (success: (position: unknown) => void) =>
+          success({
+            coords: {
+              latitude: 30.5456112,
+              longitude: 114.3651049,
+              accuracy: 8,
+            },
+          }),
+      },
+    }),
+  );
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /全程步行/ })).toBeVisible();
+  await page.getByRole("button", { name: "定位当前位置" }).click();
+  await expect(page.getByRole("combobox", { name: "出发地" })).toHaveValue(
+    "当前位置",
+  );
+  await expect(page.locator(".journey-detail")).toContainText("当前位置");
+  await expect(page.locator(".journey-detail")).toContainText("真实道路方案");
+});
+
+test("sets an arbitrary destination by clicking the map", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /全程步行/ })).toBeVisible();
+  const map = page.locator(".leaflet-container");
+  await map.scrollIntoViewIfNeeded();
+  const position = await map.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    for (const y of [140, 220, 280])
+      for (const x of [80, 140, 220]) {
+        const target = document.elementFromPoint(rect.left + x, rect.top + y);
+        if (
+          target &&
+          element.contains(target) &&
+          !target.closest(
+            ".leaflet-marker-icon,.leaflet-interactive,.leaflet-popup",
+          )
+        )
+          return { x, y };
+      }
+    throw new Error("No visible blank map position");
+  });
+  await map.click({ position });
+  await expect(page.getByRole("combobox", { name: "目的地" })).toHaveValue(
+    "地图选点",
+  );
+});
+
 test("opens live bus links ahead of saved snapshots with sampled status and Beijing read time", async ({
   page,
 }) => {
@@ -119,7 +203,7 @@ test("opens live bus links ahead of saved snapshots with sampled status and Beij
   expect(snapshotRequests).toBe(0);
   expect(oldRequests).toBe(0);
   await page.getByRole("button", { name: "路线规划", exact: true }).click();
-  await expect(page.locator(".demo-status")).toHaveText("演示模式");
+  await expect(page.locator(".demo-status")).toHaveText("道路寻路");
   await expect(page.locator(".planner-section").locator("..")).toContainText(
     "真实车辆状态请查看校园校巴",
   );
@@ -138,11 +222,9 @@ test("renders the campus workspace and switches transport details", async ({
     "aria-pressed",
     "true",
   );
-  await page
-    .getByRole("button", { name: /共享电动车路程|共享电动车预计|共享电动车/ })
-    .click();
+  await page.getByRole("button", { name: /自行车骑行/ }).click();
   await expect(
-    page.getByRole("button", { name: /共享电动车/ }),
+    page.getByRole("button", { name: /自行车骑行/ }),
   ).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".leaflet-container")).toBeVisible();
   await page.getByRole("button", { name: "地图图层", exact: true }).click();
@@ -151,7 +233,7 @@ test("renders the campus workspace and switches transport details", async ({
   await page.getByRole("button", { name: "关闭图层" }).click();
   if (test.info().project.name === "desktop") {
     const bike = await page
-      .getByRole("button", { name: /共享电动车/ })
+      .getByRole("button", { name: /自行车骑行/ })
       .boundingBox();
     expect((bike?.y ?? 0) + (bike?.height ?? 0)).toBeLessThan(1000);
   }
@@ -170,9 +252,7 @@ test("searches aliases, plans a route and swaps endpoints", async ({
   await page.getByRole("option", { name: /樱顶老图书馆/ }).click();
   await page.getByRole("button", { name: "查找路线" }).click();
   await expect(page.locator(".journey-detail")).toContainText("樱顶老图书馆");
-  await expect(page.locator(".journey-detail")).toContainText(
-    "已按演示施工记录调整路线",
-  );
+  await expect(page.locator(".journey-detail")).toContainText("真实道路方案");
   await page.getByRole("button", { name: "交换起点与终点" }).click();
   await expect(page.getByRole("combobox", { name: "出发地" })).toHaveValue(
     "樱顶老图书馆",
@@ -318,16 +398,16 @@ test("answers a local journey query with provenance", async ({ page }) => {
   await page.getByRole("button", { name: "打开出行问答" }).click();
   await page
     .getByRole("textbox", { name: "出行问题" })
-    .fill("从桂园到总图书馆怎么走");
+    .fill("从桂园到工学部图书馆怎么走");
   await page.getByRole("button", { name: "发送问题" }).click();
   await expect(page.locator(".chat-message.assistant")).toContainText(
-    "来源：本地演示数据",
+    "来源：OpenStreetMap",
   );
   await expect(page.locator(".chat-message.assistant")).toContainText(
-    "状态尚未接入",
+    "候车及乘车耗时未知",
   );
   await page.getByRole("button", { name: "关闭出行问答" }).click();
-  await expect(page.locator(".journey-detail")).toContainText("总图书馆");
+  await expect(page.locator(".journey-detail")).toContainText("工学部图书馆");
 });
 
 test("captures a complete desktop or mobile UI preview", async ({

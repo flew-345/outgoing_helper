@@ -41,6 +41,7 @@ export default function CampusMap({
   busStatus,
   showBusVehicles,
   onPick,
+  onOrigin,
   onMessage,
 }: {
   route?: Route;
@@ -51,6 +52,7 @@ export default function CampusMap({
   busStatus: string;
   showBusVehicles: boolean;
   onPick: (place: Place) => void;
+  onOrigin: (place: Place) => void;
   onMessage: (message: string) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -59,9 +61,10 @@ export default function CampusMap({
   const routeRef = useRef<L.LayerGroup | null>(null);
   const tilesRef = useRef<L.TileLayer | null>(null);
   const pickRef = useRef(onPick);
+  const originPickRef = useRef(onOrigin);
   const [layersOpen, setLayersOpen] = useState(false);
   const [showBus, setShowBus] = useState(true);
-  const [showIncidents, setShowIncidents] = useState(true);
+  const [showIncidents, setShowIncidents] = useState(false);
   const [mapError, setMapError] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [baseMap, setBaseMap] = useState("light");
@@ -73,7 +76,8 @@ export default function CampusMap({
   const busLineId = busData?.id;
   useEffect(() => {
     pickRef.current = onPick;
-  }, [onPick]);
+    originPickRef.current = onOrigin;
+  }, [onPick, onOrigin]);
 
   useEffect(() => {
     if (!container.current || mapRef.current) return;
@@ -84,6 +88,24 @@ export default function CampusMap({
       maxZoom: 19,
     });
     map.on("zoomend", () => setMapZoom(map.getZoom()));
+    map.on("click", (event) => {
+      if (
+        (event.originalEvent.target as Element)?.closest?.(
+          ".leaflet-marker-icon",
+        )
+      )
+        return;
+      const { lat, lng } = event.latlng;
+      pickRef.current({
+        id: `map:${lat.toFixed(7)}:${lng.toFixed(7)}`,
+        name: "地图选点",
+        area: "用户选择的坐标",
+        aliases: [],
+        lat,
+        lng,
+        source: "地图选点 · 入口需核实",
+      });
+    });
     map.fitBounds(campusBounds, { padding: [20, 20] });
     const tiles = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
@@ -100,6 +122,9 @@ export default function CampusMap({
       .attribution({ position: "bottomright", prefix: false })
       .addAttribution(
         'Tiles &copy; <a href="https://www.esri.com/en-us/legal/terms/data-attributions" target="_blank" rel="noreferrer">Esri &amp; contributors</a>',
+      )
+      .addAttribution(
+        'Roads &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a>',
       )
       .addTo(map);
     markersRef.current = L.layerGroup().addTo(map);
@@ -183,36 +208,6 @@ export default function CampusMap({
             )
             .addTo(layer);
         });
-      [
-        [30.5391, 114.3578],
-        [30.538, 114.3629],
-        [30.5406, 114.3631],
-      ].forEach((point) => {
-        if (
-          view === "route" &&
-          [origin, destination].some(
-            (place) =>
-              L.latLng(point as [number, number]).distanceTo([
-                place.lat,
-                place.lng,
-              ]) < 160,
-          )
-        )
-          return;
-        L.marker(point as [number, number], {
-          icon: L.divIcon({
-            className: "bike-marker",
-            html: "<span>P</span>",
-            iconSize: [24, 24],
-            iconAnchor: [12, 12],
-          }),
-          title: "演示电动车停车点",
-        })
-          .bindPopup(
-            "共享电动车停车点 · 演示数据<br>实际可用数量需在运营平台查询",
-          )
-          .addTo(layer);
-      });
     }
     if (showIncidents)
       incidents.forEach((item) => {
@@ -270,13 +265,19 @@ export default function CampusMap({
       opacity: 0.9,
       lineCap: "round",
     }).addTo(layer);
-    L.polyline(route.points, {
-      color: routeColors[route.mode],
-      weight: 5,
-      opacity: 0.95,
-      lineCap: "round",
-      dashArray: route.mode === "walk" ? "2 8" : undefined,
-    }).addTo(layer);
+    route.legs.forEach((leg) =>
+      L.polyline(leg.points, {
+        color: leg.connector ? "#7b8088" : routeColors[leg.mode],
+        weight: leg.connector ? 3 : 5,
+        opacity: 0.95,
+        lineCap: "round",
+        dashArray: leg.connector ? "4 6" : undefined,
+      })
+        .bindTooltip(
+          leg.connector ? "地点接入段 · 入口与通行需核实" : "沿真实道路行进",
+        )
+        .addTo(layer),
+    );
     [origin, destination].forEach((place, index) => {
       L.marker([place.lat, place.lng], {
         icon: L.divIcon({
@@ -309,6 +310,15 @@ export default function CampusMap({
         const map = mapRef.current;
         if (!map) return;
         map.flyTo([latitude, longitude], 16);
+        originPickRef.current({
+          id: "current-location",
+          name: "当前位置",
+          area: "浏览器定位",
+          aliases: [],
+          lat: latitude,
+          lng: longitude,
+          source: `浏览器定位 · 精度约 ${Math.round(position.coords.accuracy)} 米`,
+        });
         L.circleMarker([latitude, longitude], {
           radius: 7,
           color: "white",
@@ -318,7 +328,9 @@ export default function CampusMap({
         })
           .bindPopup("当前位置")
           .addTo(map);
-        onMessage("已定位到当前位置。");
+        onMessage(
+          `已将当前位置设为起点，定位精度约 ${Math.round(position.coords.accuracy)} 米。`,
+        );
       },
       () => {
         setLocationBusy(false);
@@ -444,7 +456,7 @@ export default function CampusMap({
               checked={showBus}
               onChange={(e) => setShowBus(e.target.checked)}
             />
-            校巴与停车点
+            校巴线路与车辆
           </label>
           <label>
             <input
@@ -467,7 +479,7 @@ export default function CampusMap({
         </span>
         <span>
           <i className="legend-bike" />
-          停车点
+          自行车路线
         </span>
         <span>
           <i className="legend-alert" />

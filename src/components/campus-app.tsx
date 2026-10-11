@@ -43,7 +43,14 @@ import {
   type Place,
   type Route,
 } from "@/lib/campus";
-import { arrivalsAt, useTransitFeed, vehicleFreshness } from "@/lib/bus";
+import {
+  arrivalsAt,
+  useTransitFeed,
+  vehicleFreshness,
+  type BusLine,
+} from "@/lib/bus";
+import { parseRoadGraph, type RoadGraph } from "@/lib/road-router";
+import { amapNavigationUrl } from "@/lib/route-provider";
 
 const CampusMap = dynamic(() => import("./campus-map"), {
   ssr: false,
@@ -183,9 +190,9 @@ export default function CampusApp() {
     origin: places[0],
     destination: places[1],
   });
-  const [routes, setRoutes] = useState<Route[]>(() =>
-    planRoutes(places[0], places[1]),
-  );
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [roadGraph, setRoadGraph] = useState<RoadGraph | null>(null);
+  const [roadError, setRoadError] = useState("");
   const [selectedMode, setSelectedMode] = useState<Mode>("walk");
   const [favorites, setFavorites] = useState<string[]>(["library", "meiyuan"]);
   const [busy, setBusy] = useState(false);
@@ -202,6 +209,10 @@ export default function CampusApp() {
   const [dataOpen, setDataOpen] = useState(false);
   const [busLineView, setBusLineView] = useState("线路");
   const feed = useTransitFeed();
+  const initialBusLines = useRef<BusLine[]>([]);
+  useEffect(() => {
+    initialBusLines.current = feed.snapshot?.lines ?? [];
+  }, [feed.snapshot]);
   const [busLineId, setBusLineId] = useState("");
   const [busTarget, setBusTarget] = useState(1);
   const [feedAddress, setFeedAddress] = useState("");
@@ -245,6 +256,42 @@ export default function CampusApp() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const routeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () =>
+        controller.abort(new DOMException("道路数据加载超时", "TimeoutError")),
+      15000,
+    );
+    fetch("/data/campus-roads.json", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok)
+          throw new Error(`道路数据读取失败：${response.status}`);
+        return response.json();
+      })
+      .then(parseRoadGraph)
+      .then((graph) => {
+        setRoadGraph(graph);
+        setRoutes(
+          planRoutes(places[0], places[1], graph, initialBusLines.current),
+        );
+      })
+      .catch((error) => {
+        if (
+          !controller.signal.aborted ||
+          controller.signal.reason?.name === "TimeoutError"
+        )
+          setRoadError(
+            error instanceof Error ? error.message : "道路数据读取失败",
+          );
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") === "bus") {
@@ -324,19 +371,32 @@ export default function CampusApp() {
       notify("起点和终点相同，请选择不同的地点。");
       return;
     }
+    if (!roadGraph) {
+      notify(roadError || "道路数据正在加载，请稍后重试。");
+      return;
+    }
     setBusy(true);
     if (routeTimer.current) clearTimeout(routeTimer.current);
     routeTimer.current = setTimeout(() => {
-      setRoutes(planRoutes(from, to));
+      const next = planRoutes(from, to, roadGraph, feed.snapshot?.lines);
+      setRoutes(next);
       setJourney({ origin: from, destination: to });
-      setSelectedMode("walk");
+      setSelectedMode(next[0]?.mode ?? "walk");
+      if (!next.length)
+        notify(
+          "没有找到连通的可通行道路，请选择其他地点；不会绘制直线替代路线。",
+        );
       setBusy(false);
       setView("route");
-    }, 400);
+    }, 0);
   }
   function pickDestination(place: Place) {
     setDestination(place);
     calculate(origin, place);
+  }
+  function pickOrigin(place: Place) {
+    setOrigin(place);
+    calculate(place, destination);
   }
   function toggleFavorite() {
     const next = saved
@@ -356,9 +416,18 @@ export default function CampusApp() {
     const parsed = parseJourney(text);
     let reply: string;
     if (parsed.origin && parsed.destination) {
-      const options = planRoutes(parsed.origin, parsed.destination);
-      const walk = options.find((r) => r.mode === "walk")!;
-      reply = `从${parsed.origin.name}到${parsed.destination.name}，步行估算 ${walk.minutes} 分钟，约 ${formatDistance(walk.distance)}。${walk.affected ? "樱园路有演示施工记录，示意路线已调整。" : "步行无需候车。"}校巴行程耗时仍为估算，电动车状态尚未接入，出发前请核实。来源：本地演示数据，${DEMO_TIME}；路线仅供 UI 预览。`;
+      const options = roadGraph
+        ? planRoutes(
+            parsed.origin,
+            parsed.destination,
+            roadGraph,
+            feed.snapshot?.lines,
+          )
+        : [];
+      const walk = options.find((r) => r.mode === "walk");
+      reply = walk
+        ? `从${parsed.origin.name}到${parsed.destination.name}，按真实道路计算步行约 ${walk.minutes} 分钟，${formatDistance(walk.distance)}。耗时按步速估算，入口接入段需核实。来源：OpenStreetMap 道路快照；校巴候车及乘车耗时未知，车辆状态请查看校巴页。`
+        : "道路尚未加载或地点间没有可用的连通道路，请查看路线页提示。";
       setOrigin(parsed.origin);
       setDestination(parsed.destination);
       calculate(parsed.origin, parsed.destination);
@@ -366,11 +435,11 @@ export default function CampusApp() {
       reply = `演示管制记录：${incidents.map((i) => `${i.title}（${i.time}）`).join("；")}。来源：本地演示数据，${DEMO_TIME}。这些记录不代表校园当前实际管制。`;
     } else if (/校巴|等车|骑车/.test(text)) {
       reply = busData
-        ? `${busData.name}，${targetStop?.name}：${busStatus}。${busFreshness === "unavailable" ? "暂无可用车辆状态。" : busArrivals.map((item) => `车辆 ${item.vehicle.id} ${item.label}`).join("；") || "该站次暂无候选车。"}来源：bus.whu.edu.cn，车辆读取时间 ${busData.vehiclesFetchedAt ?? "暂无"}。接口未提供抵达分钟数；电动车仍为演示数据，无法据此比较实际等车与骑车耗时。`
-        : `校巴${busStatus}，暂时无法判断候车情况。电动车仍为演示数据；可查看步行示意方案。`;
+        ? `${busData.name}，${targetStop?.name}：${busStatus}。${busFreshness === "unavailable" ? "暂无可用车辆状态。" : busArrivals.map((item) => `车辆 ${item.vehicle.id} ${item.label}`).join("；") || "该站次暂无候选车。"}来源：bus.whu.edu.cn，车辆读取时间 ${busData.vehiclesFetchedAt ?? "暂无"}。接口未提供抵达分钟数；自行车方案不含车辆租借状态，无法据此比较实际等车与骑车耗时。`
+        : `校巴${busStatus}，暂时无法判断候车情况。可查看真实道路步行方案。`;
     } else {
       reply =
-        "暂时没有识别出完整行程。可查询桂园宿舍、第一教学楼、总图书馆、樱顶老图书馆、梅园食堂、珞珈门、工学部教学楼和凌波门，或查询道路管制。";
+        "暂时没有识别出完整行程。可查询桂园宿舍、第一教学楼、工学部图书馆、樱顶老图书馆、梅园食堂、珞珈门、工学部教学楼和凌波门，或查询道路管制。";
     }
     setChatMessages((prev) => [
       ...prev,
@@ -424,7 +493,15 @@ export default function CampusApp() {
           <span className="topbar-divider" />
           <span className="demo-status">
             <i />
-            {view === "bus" ? busMode : "演示模式"}
+            {view === "bus"
+              ? busMode
+              : view === "route"
+                ? roadGraph
+                  ? "道路寻路"
+                  : roadError
+                    ? "路网未连接"
+                    : "路网加载中"
+                : "公告演示"}
           </span>
           <button
             className="avatar"
@@ -453,7 +530,7 @@ export default function CampusApp() {
             </h1>
             <p>
               {view === "route"
-                ? "从宿舍到课堂，让每一段校园路程更从容。"
+                ? "选择地点或点击地图设置终点；定位可设为起点。"
                 : view === "bus"
                   ? "文理学部、工学部与东湖，一线串联校园。"
                   : "留意道路变化，安排好今天的行程。"}
@@ -466,7 +543,9 @@ export default function CampusApp() {
               <span>
                 {view === "bus"
                   ? `数据读取：${busReadTimeText}（北京时间）`
-                  : "2026 年 10 月 10 日 · 星期六"}
+                  : view === "route"
+                    ? `路网数据：${roadGraph?.dataTimestamp.slice(0, 10) ?? "加载中"}`
+                    : "演示公告 · 2026 年 10 月 10 日"}
               </span>
             </div>
             <span className="meta-divider" />
@@ -563,9 +642,17 @@ export default function CampusApp() {
                     <h2>
                       出行方案 <span>{routes.length}</span>
                     </h2>
-                    <span>总耗时比较</span>
+                    <span>道路距离 / 估算耗时</span>
                   </div>
                   <div className={`route-list ${busy ? "is-loading" : ""}`}>
+                    {!routes.length && (
+                      <p role="status">
+                        {roadError ||
+                          (roadGraph
+                            ? "未找到连通道路，请选择其他地点。"
+                            : "正在加载校园路网…")}
+                      </p>
+                    )}
                     {routes.map((route) => {
                       const Icon = modeIcons[route.mode];
                       const active = selectedMode === route.mode;
@@ -574,7 +661,10 @@ export default function CampusApp() {
                           className={`route-option ${route.mode} ${active ? "selected" : ""}`}
                           key={route.mode}
                           aria-pressed={active}
-                          onClick={() => setSelectedMode(route.mode)}
+                          onClick={() => {
+                            setSelectedMode(route.mode);
+                            if (route.busLineId) setBusLineId(route.busLineId);
+                          }}
                         >
                           <div className="route-option-top">
                             <span className={`mode-icon ${route.mode}`}>
@@ -586,7 +676,7 @@ export default function CampusApp() {
                                 {route.mode === "walk"
                                   ? "免等候"
                                   : route.mode === fastest?.mode
-                                    ? "预计最快"
+                                    ? "估算最快"
                                     : "少走路"}
                               </small>
                             </span>
@@ -596,8 +686,10 @@ export default function CampusApp() {
                           </div>
                           <div className="route-option-stats">
                             <strong>
-                              {route.minutes}
-                              <span>分钟</span>
+                              {route.minutes ?? "未知"}
+                              <span>
+                                {route.minutes === null ? "耗时" : "分钟"}
+                              </span>
                             </strong>
                             <span>{formatDistance(route.distance)}</span>
                             <i />
@@ -609,11 +701,14 @@ export default function CampusApp() {
                                 <span
                                   className={`segment-line ${segment.mode}`}
                                   style={{
-                                    flexGrow: Math.max(segment.minutes, 2),
+                                    flexGrow: Math.max(segment.minutes ?? 2, 2),
                                   }}
                                 />
                                 <small>
-                                  {segment.label} {segment.minutes}′
+                                  {segment.label}{" "}
+                                  {segment.minutes === null
+                                    ? "未知"
+                                    : `${segment.minutes}′`}
                                 </small>
                               </span>
                             ))}
@@ -628,7 +723,50 @@ export default function CampusApp() {
                   </div>
                   <div className="estimate-note">
                     <Info size={14} />
-                    <span>耗时为演示估算；真实车辆状态请查看校园校巴。</span>
+                    <span>
+                      步行按 72 米/分、骑行按 200
+                      米/分估算；入口接入段需核实。校巴总耗时未知，真实车辆状态请查看校园校巴。
+                    </span>
+                  </div>
+                  {selectedRoute && (
+                    <details className="road-steps">
+                      <summary>
+                        道路步骤 · {selectedRoute.steps.length} 段
+                      </summary>
+                      <ol>
+                        {selectedRoute.steps.map((step, index) => (
+                          <li key={index}>{step}</li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
+                  {selectedRoute && selectedRoute.mode !== "bus" && (
+                    <div className="road-credit">
+                      <a
+                        href={amapNavigationUrl(
+                          journey.origin,
+                          journey.destination,
+                          selectedRoute.mode,
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        在高德查看同起终点路线
+                        {selectedRoute.mode === "bike" ? "（骑行需手机）" : ""}
+                      </a>{" "}
+                      · 高德会独立规划
+                    </div>
+                  )}
+                  <div className="road-credit">
+                    路网 ©{" "}
+                    <a
+                      href="https://www.openstreetmap.org/copyright"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      OpenStreetMap contributors
+                    </a>{" "}
+                    · ODbL · {roadGraph?.dataTimestamp.slice(0, 10) ?? "加载中"}
                   </div>
                 </section>
                 <div className="sidebar-bottom">
@@ -805,7 +943,8 @@ export default function CampusApp() {
                 <div className="data-footnote">
                   <Info size={15} />
                   <p>
-                    来源：武大校巴页面接口。站点与车辆坐标按高德坐标推断转换，尚未实地核验；线路规划仍为演示估算。
+                    来源：武大校巴页面接口。站点与车辆坐标按高德坐标推断转换，尚未实地核验；步行与骑行按
+                    OSM 道路寻路，入口接入段需核实。
                   </p>
                 </div>
                 <div className="source-line">
@@ -923,6 +1062,7 @@ export default function CampusApp() {
               busStatus={busStatus}
               showBusVehicles={busFreshness !== "unavailable"}
               onPick={pickDestination}
+              onOrigin={pickOrigin}
               onMessage={notify}
             />
             {view === "route" && selectedRoute ? (
@@ -941,21 +1081,25 @@ export default function CampusApp() {
                       <strong>{journey.destination.name}</strong>
                     </div>
                     <p>
-                      {selectedRoute.affected
-                        ? "已按演示施工记录调整路线"
-                        : "校园内行程"}
+                      真实道路方案
                       <span>·</span>
                       {formatDistance(selectedRoute.distance)}
-                      <span>·</span>路线为示意，非导航
+                      <span>·</span>接入段需核实
                     </p>
                   </div>
                 </div>
                 <div className="detail-estimate">
                   <strong>
-                    {selectedRoute.minutes}
-                    <small>分钟</small>
+                    {selectedRoute.minutes ?? "未知"}
+                    <small>
+                      {selectedRoute.minutes === null ? "耗时" : "分钟"}
+                    </small>
                   </strong>
-                  <span>预计总耗时</span>
+                  <span>
+                    {selectedRoute.minutes === null
+                      ? "候车及乘车未知"
+                      : "按速度估算"}
+                  </span>
                 </div>
               </div>
             ) : (
@@ -973,18 +1117,29 @@ export default function CampusApp() {
                       <strong>
                         {view === "bus"
                           ? (busData?.name ?? "校园校巴")
-                          : "校园管制区域"}
+                          : view === "route"
+                            ? "道路方案不可用"
+                            : "校园管制区域"}
                       </strong>
                     </div>
                     <p>
                       {view === "bus"
                         ? `${busData?.stops.length ?? 0} 个站次 · ${busStatus}`
-                        : "2 条演示记录 · 有效时间以各条公告为准"}
+                        : view === "route"
+                          ? roadError ||
+                            (roadGraph
+                              ? "未找到连通道路，请重新选择地点"
+                              : "道路数据正在加载")
+                          : "2 条演示记录 · 有效时间以各条公告为准"}
                     </p>
                   </div>
                 </div>
                 <span className="small-tag">
-                  {view === "bus" ? "bus.whu.edu.cn" : "本地演示数据"}
+                  {view === "bus"
+                    ? "bus.whu.edu.cn"
+                    : view === "route"
+                      ? "OpenStreetMap"
+                      : "本地演示数据"}
                 </span>
               </div>
             )}
@@ -995,7 +1150,11 @@ export default function CampusApp() {
               </span>
               <span>
                 <Clock3 size={11} />
-                {view === "bus" ? busStatus : `演示数据 ${DEMO_TIME}`}
+                {view === "bus"
+                  ? busStatus
+                  : view === "route"
+                    ? `OSM 路网 ${roadGraph?.dataTimestamp.slice(0, 10) ?? "加载中"}`
+                    : `演示数据 ${DEMO_TIME}`}
               </span>
             </div>
           </section>
@@ -1059,7 +1218,8 @@ export default function CampusApp() {
             </span>
             <h2 id="data-title">数据来源与状态</h2>
             <p>
-              校巴读取独立数据源；地点、道路规划、电动车和管制仍为演示数据。
+              步行与骑行使用 OpenStreetMap
+              路网，校巴使用校方接口；公告仍为演示记录。
             </p>
             <dl>
               <div>
@@ -1068,11 +1228,17 @@ export default function CampusApp() {
               </div>
               <div>
                 <dt>校园地点</dt>
-                <dd>本地演示数据 · 坐标待实地校验</dd>
+                <dd>
+                  OSM
+                  建筑中心或校门坐标，入口尚未实地校验。总馆尚无可靠预置坐标，可在地图选点。
+                </dd>
               </div>
               <div>
                 <dt>路线与耗时</dt>
-                <dd>距离估算 · 非实际道路导航</dd>
+                <dd>
+                  真实路网 Dijkstra 寻路；步行 72 米/分、骑行 200
+                  米/分。虚线为地点到路网的接入段，通行与入口需核实；台阶不提供骑行。
+                </dd>
               </div>
               <div>
                 <dt>校巴</dt>
@@ -1083,8 +1249,8 @@ export default function CampusApp() {
                 </dd>
               </div>
               <div>
-                <dt>电动车</dt>
-                <dd>演示数据 · 实时状态不可用</dd>
+                <dt>自行车</dt>
+                <dd>路线可计算；车辆租借实时状态不可用。不适用于电动车。</dd>
               </div>
               <div>
                 <dt>道路管制</dt>
@@ -1096,7 +1262,9 @@ export default function CampusApp() {
               </div>
               <div>
                 <dt>数据有效性</dt>
-                <dd>仅限预览，不作为实际出行依据</dd>
+                <dd>
+                  道路静态快照，未接入临时门禁、施工或现场通行状态；校巴仅提供单次乘车候选，不计算换乘和总耗时。
+                </dd>
               </div>
             </dl>
             <form
@@ -1154,7 +1322,7 @@ export default function CampusApp() {
               </span>
               <div>
                 <h2 id="chat-title">出行问答</h2>
-                <span>本地演示 · 非实时 AI 服务</span>
+                <span>本地道路与校巴查询 · 非 AI 服务</span>
               </div>
               <button
                 className="icon-button"
@@ -1174,7 +1342,7 @@ export default function CampusApp() {
                   <h3>你的下一段校园旅程</h3>
                   <div className="chat-suggestions">
                     {[
-                      "从桂园到总图书馆怎么走",
+                      "从桂园到工学部图书馆怎么走",
                       "现在适合等校巴还是骑车",
                       "今天有哪些道路管制",
                     ].map((text) => (
@@ -1216,7 +1384,7 @@ export default function CampusApp() {
               </button>
             </form>
             <div className="chat-disclaimer">
-              回答仅引用本地演示记录，实际出行请核实。
+              道路来自 OSM；实时车辆来自校巴接口；公告为演示记录。
             </div>
           </section>
         </div>
