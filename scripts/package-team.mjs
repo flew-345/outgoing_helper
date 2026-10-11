@@ -14,6 +14,7 @@ const sourceFiles = [
   ".prettierignore",
   "AGENTS.md",
   "README.md",
+  "TODO.md",
   "package.json",
   "package-lock.json",
   "tsconfig.json",
