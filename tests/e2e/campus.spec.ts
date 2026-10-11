@@ -76,6 +76,55 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
+test("opens live bus links ahead of saved snapshots with sampled status and Beijing read time", async ({
+  page,
+}) => {
+  const fixture = transitFixture();
+  let apiRequests = 0;
+  let snapshotRequests = 0;
+  let oldRequests = 0;
+  await page.addInitScript(() =>
+    localStorage.setItem("luojia-transit-feed-url", "/data/old.json"),
+  );
+  await page.route("**/data/whu-bus.json", (route) => {
+    snapshotRequests++;
+    return route.fulfill({ json: fixture });
+  });
+  await page.route("**/data/old.json", (route) => {
+    oldRequests++;
+    return route.fulfill({ json: fixture });
+  });
+  await page.route("**/api/transit", (route) => {
+    apiRequests++;
+    return route.fulfill({ json: fixture });
+  });
+  await page.goto("/?live=1&view=bus");
+  await expect(
+    page.getByRole("heading", { name: "校巴，连接每一站" }),
+  ).toBeVisible();
+  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".demo-status")).toHaveText("校巴实采");
+  const readTime = new Date(fixture.lines[0].vehiclesFetchedAt!).toLocaleString(
+    "zh-CN",
+    { timeZone: "Asia/Shanghai" },
+  );
+  await expect(page.locator(".workspace-meta")).toContainText(
+    `数据读取：${readTime}（北京时间）`,
+  );
+  expect(apiRequests).toBeGreaterThan(0);
+  expect(snapshotRequests).toBe(0);
+  expect(oldRequests).toBe(0);
+  await page.reload();
+  await expect(page.locator(".demo-status")).toHaveText("校巴实采");
+  expect(snapshotRequests).toBe(0);
+  expect(oldRequests).toBe(0);
+  await page.getByRole("button", { name: "路线规划", exact: true }).click();
+  await expect(page.locator(".demo-status")).toHaveText("演示模式");
+  await expect(page.locator(".planner-section").locator("..")).toContainText(
+    "真实车辆状态请查看校园校巴",
+  );
+});
+
 test("renders the campus workspace and switches transport details", async ({
   page,
 }) => {
@@ -197,6 +246,7 @@ test("marks old snapshots stale and keeps last good data after a failed refresh"
   await page.goto("/");
   await page.getByRole("button", { name: "校园校巴", exact: true }).click();
   await expect(page.locator(".source-line")).toContainText("已过期");
+  await expect(page.locator(".demo-status")).toHaveText("历史快照");
   failRefresh = true;
   await page.clock.fastForward(11000);
   await expect(page.locator(".bus-warning")).toContainText("503");
@@ -213,6 +263,7 @@ test("shows unavailable data without simulated buses when import fails", async (
   await page.goto("/");
   await page.getByRole("button", { name: "校园校巴", exact: true }).click();
   await expect(page.locator(".bus-empty")).toContainText("实时状态不可用");
+  await expect(page.locator(".demo-status")).toHaveText("校巴未连接");
   await expect(page.locator(".bus-stop")).toHaveCount(0);
   await expect(page.locator(".bus-marker")).toHaveCount(0);
 });

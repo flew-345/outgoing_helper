@@ -24,6 +24,8 @@ const config = tseslint.config(
         process: "readonly",
         Buffer: "readonly",
         URL: "readonly",
+        fetch: "readonly",
+        AbortSignal: "readonly",
       },
     },
   },

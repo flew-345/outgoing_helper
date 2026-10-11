@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   arrivalsAt,
+  initialFeedUrl,
   normalizeFeedUrl,
   parseTransitSnapshot,
   vehicleFreshness,
@@ -59,6 +60,22 @@ function fixture(): TransitSnapshot {
 }
 
 describe("transit import boundary", () => {
+  it("resolves live links before old snapshot preferences and preserves normal saved feeds", () => {
+    expect(initialFeedUrl("?view=bus&live=1", "/data/old.json")).toBe(
+      "/api/transit",
+    );
+    expect(initialFeedUrl("?live=1", "javascript:alert(1)")).toBe(
+      "/api/transit",
+    );
+    expect(initialFeedUrl("?live=0", "/data/old.json")).toBe("/data/old.json");
+    expect(
+      initialFeedUrl("?view=bus", "http://127.0.0.1:8766/api/transit"),
+    ).toBe("http://127.0.0.1:8766/api/transit");
+    expect(initialFeedUrl("", null)).toBe("/data/whu-bus.json");
+    expect(initialFeedUrl("", "javascript:alert(1)")).toBe(
+      "/data/whu-bus.json",
+    );
+  });
   it("preserves repeated physical stops as separate occurrences", () => {
     const value = parseTransitSnapshot(fixture());
     expect(value.lines[0].stops[0].sourceStopId).toBe(

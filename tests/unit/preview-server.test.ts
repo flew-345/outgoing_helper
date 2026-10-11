@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import {
   createPreviewServer,
   listenPreview,
@@ -42,6 +42,49 @@ afterEach(async () => {
 });
 
 describe("portable preview server", () => {
+  it("proxies fresh live snapshots on both feed paths instead of the bundled file", async () => {
+    const { site } = await fixture();
+    await mkdir(join(site, "data"));
+    await writeFile(
+      join(site, "data", "whu-bus.json"),
+      '{"fetchedAt":"old-file"}',
+    );
+    let count = 0;
+    const upstream = createServer((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ fetchedAt: `live-${++count}` }));
+    });
+    servers.push(upstream);
+    const upstreamURL = await listenPreview(upstream, 0);
+    const server = createPreviewServer(site, { feedUrl: upstreamURL });
+    servers.push(server);
+    const url = await listenPreview(server, 0);
+    const first = await fetch(`${url}/api/transit`);
+    expect(first.headers.get("x-transit-source")).toBe("live-collector");
+    expect(first.headers.get("cache-control")).toBe("no-store");
+    expect(await first.json()).toEqual({ fetchedAt: "live-1" });
+    const second = await fetch(`${url}/data/whu-bus.json`);
+    expect(await second.json()).toEqual({ fetchedAt: "live-2" });
+  });
+  it("reports a failed live feed without substituting an old static snapshot", async () => {
+    const { site } = await fixture();
+    const upstream = createServer((_request, response) => {
+      response.writeHead(503, { "Content-Type": "application/json" });
+      response.end('{"error":"not ready"}');
+    });
+    servers.push(upstream);
+    const server = createPreviewServer(site, {
+      feedUrl: await listenPreview(upstream, 0),
+    });
+    servers.push(server);
+    const url = await listenPreview(server, 0);
+    const response = await fetch(`${url}/api/transit`);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "not ready" });
+    expect(() =>
+      createPreviewServer(site, { feedUrl: "file:///secret" }),
+    ).toThrow("HTTP");
+  });
   it("serves UTF-8 HTML, JS, query strings and encoded filenames", async () => {
     const { url } = await fixture();
     const html = await fetch(`${url}/?preview=1`);

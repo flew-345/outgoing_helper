@@ -232,6 +232,18 @@ def make_handler(state, lock):
     return Handler
 
 
+def publish_live_snapshot(state, lock, snapshot, output=None):
+    """The live feed must not freeze when a Windows cache file is locked."""
+    with lock:
+        state['snapshot'] = snapshot
+    if output is not None:
+        try:
+            atomic_json(output, snapshot)
+        except OSError as error:
+            return str(error)
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, default=ROOT/'public/data/whu-bus.json')
@@ -240,12 +252,15 @@ def main():
     parser.add_argument('--interval', type=float, default=10)
     parser.add_argument('--serve', action='store_true', help='Serve read-only feed at 127.0.0.1; keep polling until Ctrl+C')
     parser.add_argument('--port', type=int, default=8766)
+    parser.add_argument('--no-persist', action='store_true', help='Serve from memory without rewriting the cache file')
     parser.add_argument('--script', type=Path, help='Previously saved official app JS (offline key extraction only)')
     args = parser.parse_args()
     if args.interval < 10 or args.samples < 1:
         parser.error('Use interval >=10 seconds and samples >=1')
     if args.serve and args.capture:
         parser.error('Capture is bounded: use --samples without --serve, then start the live feed separately')
+    if args.no_persist and not args.serve:
+        parser.error('--no-persist requires --serve')
     previous = json.loads(args.out.read_text(encoding='utf-8')) if args.out.exists() else None
     recorder = Recorder(args.capture)
     client = BusClient(args.script.read_text(encoding='utf-8') if args.script else None, transport=recorder)
@@ -262,9 +277,12 @@ def main():
             started = time.monotonic()
             try:
                 snapshot = collector.refresh()
-                atomic_json(args.out, snapshot)
-                with lock:
-                    state['snapshot'] = snapshot
+                if args.serve:
+                    error = publish_live_snapshot(state, lock, snapshot, None if args.no_persist else args.out)
+                    if error:
+                        print('Cache write failed; live API remains updated:', error, flush=True)
+                else:
+                    atomic_json(args.out, snapshot)
                 count += 1
                 if args.capture:
                     atomic_json(args.capture/f'snapshot-{count:03d}.json', snapshot)

@@ -22,6 +22,24 @@ python scripts/transit/collector.py --serve
 
 在页面“数据说明”的“校巴数据地址”填入 `http://127.0.0.1:8766/api/transit`，点击“应用数据地址”。服务仅监听本机，10 秒轮询车辆，站点与轨迹默认缓存 6 小时。按 Ctrl+C 停止，最后快照保留。静态导出预览也可使用这个地址；手机上的 `127.0.0.1` 指手机本身，本服务不开放局域网访问。由 HTTPS 部署页面访问本机 HTTP 服务时，浏览器策略可能阻止请求；需要部署同源代理。
 
+## 本机直接进入实采页面
+
+先构建静态导出（PowerShell），然后分别在两个终端运行采集与网页服务：
+
+```powershell
+$env:TRANSIT_STATIC_EXPORT='1'
+npm run build
+python scripts/transit/collector.py --serve --no-persist
+```
+
+```sh
+node scripts/preview-server.mjs --root out --port 4174 --feed http://127.0.0.1:8766/api/transit --no-open
+```
+
+打开 `http://127.0.0.1:4174/?live=1&view=bus`。`live=1` 让前端选择同源 `/api/transit`，优先于浏览器保存的旧地址；`view=bus` 直接进入校巴页。preview server 的 `--feed` 将 `/api/transit` 和原 `/data/whu-bus.json` 都代理到实时采集服务，不读取随包快照作为替代。这个入口适用于带 `--feed` 的预览服务；单独 `npm run dev` 时仍可用上面的“数据说明”设置独立采集 API 地址。
+
+`--no-persist` 模式把新响应保存在内存中，不反复替换 JSON 文件。Windows 拒绝文件替换时，默认持久化模式也会继续更新 API，并单独报告缓存错误。网页必须能看到时间连续变化，不能仅以 HTTP 200 判断采集正常。上游或采集服务失败时显示错误/历史状态，不悄悄退回静态样本。
+
 没有改动系统或手机代理，不需要 Yakit。当前请求不带 Cookie 或 Authorization。若上游将来重定向登录或修改 JS/协议，脚本报错并保留最后数据；它不处理登录绕过。
 
 ## 保存部分响应，离线重复分析

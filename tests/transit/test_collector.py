@@ -9,12 +9,13 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'scripts/transit'))
 from collector import (Collector, LINE_IDS, Recorder, atomic_json, gcj_to_wgs,
-                       iso_now, make_handler, normalize_line, served_snapshot)
+                       iso_now, make_handler, normalize_line, served_snapshot, publish_live_snapshot)
 from upstream import BusClient
 from analyze_capture import arrival_labels
 
@@ -47,6 +48,18 @@ class FakeClient:
 
 
 class CollectorTests(unittest.TestCase):
+    def test_locked_cache_does_not_freeze_the_live_api(self):
+        snapshot = Collector(FakeClient()).refresh()
+        state = {'snapshot':None}
+        lock = threading.Lock()
+        with patch('collector.atomic_json', side_effect=PermissionError('Windows file locked')):
+            error = publish_live_snapshot(state, lock, snapshot, Path('cache.json'))
+        self.assertIn('locked', error)
+        self.assertEqual(state['snapshot'], snapshot)
+        # Disk persistence is optional; memory publication is always required.
+        with patch('collector.atomic_json') as writer:
+            self.assertIsNone(publish_live_snapshot(state, lock, snapshot))
+            writer.assert_not_called()
     def test_offline_station_labels_follow_response_order_and_same_stop_state(self):
         vehicles = [{**VEHICLE, 'id':str(order), 'stop_index':order} for order in (3,9,16)]
         self.assertEqual(arrival_labels(vehicles,15), [dict(vehicleId='9',label='6 站后'),dict(vehicleId='3',label='12 站后')])

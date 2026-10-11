@@ -35,8 +35,17 @@ function isInside(root, path) {
   );
 }
 
-export function createPreviewServer(directory) {
+export function createPreviewServer(directory, { feedUrl } = {}) {
   const root = resolve(directory);
+  if (feedUrl) {
+    const parsed = new URL(feedUrl);
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password
+    )
+      throw new Error("Feed URL must be HTTP(S) without credentials");
+  }
   return createServer(async (request, response) => {
     const respond = (status, message) => {
       response.writeHead(status, {
@@ -61,6 +70,36 @@ export function createPreviewServer(directory) {
     }
     if (pathname.includes("\0")) {
       respond(400, "Invalid URL");
+      return;
+    }
+    if (feedUrl && ["/api/transit", "/data/whu-bus.json"].includes(pathname)) {
+      try {
+        const upstream = await fetch(feedUrl, {
+          cache: "no-store",
+          redirect: "error",
+          signal: AbortSignal.timeout(8000),
+        });
+        const body = Buffer.from(await upstream.arrayBuffer());
+        response.writeHead(upstream.status, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Length": body.length,
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+          "X-Transit-Source": "live-collector",
+        });
+        response.end(request.method === "HEAD" ? undefined : body);
+      } catch {
+        response.writeHead(503, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Transit-Source": "live-collector",
+        });
+        response.end(
+          request.method === "HEAD"
+            ? undefined
+            : JSON.stringify({ error: "Live transit collector unavailable" }),
+        );
+      }
       return;
     }
     let file = resolve(root, `.${pathname}`);
@@ -142,17 +181,23 @@ async function main() {
   const args = process.argv.slice(2);
   const rootFlag = args.indexOf("--root");
   const portFlag = args.indexOf("--port");
+  const feedFlag = args.indexOf("--feed");
+  if (feedFlag >= 0 && !args[feedFlag + 1])
+    throw new Error("--feed requires a URL");
   const root =
     rootFlag >= 0
       ? resolve(args[rootFlag + 1] ?? "out")
       : join(dirname(fileURLToPath(import.meta.url)), "site");
   await stat(join(root, "index.html"));
-  const server = createPreviewServer(root);
+  const server = createPreviewServer(root, {
+    feedUrl: feedFlag >= 0 ? args[feedFlag + 1] : undefined,
+  });
   const url = await listenPreview(
     server,
     portFlag >= 0 ? Number(args[portFlag + 1]) : 4173,
   );
   console.log(`Luojia Transit preview: ${url}`);
+  if (feedFlag >= 0) console.log(`Live feed: ${args[feedFlag + 1]}`);
   console.log(
     "Keep this window open. Press Ctrl+C to stop. Map imagery requires internet.",
   );

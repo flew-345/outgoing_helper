@@ -226,6 +226,19 @@ export default function CampusApp() {
         : "实时状态不可用";
   const busArrivals =
     busData && targetStop ? arrivalsAt(busData, targetStop.order) : [];
+  const busMode = feed.loading
+    ? "校巴连接中"
+    : busFreshness === "fresh"
+      ? "校巴实采"
+      : busFreshness === "stale"
+        ? "历史快照"
+        : "校巴未连接";
+  const busReadTime = busData?.vehiclesFetchedAt ?? feed.snapshot?.fetchedAt;
+  const busReadTimeText = busReadTime
+    ? new Date(busReadTime).toLocaleString("zh-CN", {
+        timeZone: "Asia/Shanghai",
+      })
+    : "暂无读取时间";
   const selectedRoute = routes.find((r) => r.mode === selectedMode);
   const fastest = recommendRoute(routes);
   const saved = favorites.includes(destination.id);
@@ -233,6 +246,12 @@ export default function CampusApp() {
   const routeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("view") === "bus") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setView("bus");
+    }
+  }, []);
   useEffect(() => {
     // Restore browser-only preferences after hydration.
     try {
@@ -405,7 +424,7 @@ export default function CampusApp() {
           <span className="topbar-divider" />
           <span className="demo-status">
             <i />
-            演示模式
+            {view === "bus" ? busMode : "演示模式"}
           </span>
           <button
             className="avatar"
@@ -444,7 +463,11 @@ export default function CampusApp() {
             <Sun size={21} />
             <div>
               <strong>珞珈山 · 武汉大学</strong>
-              <span>2026 年 10 月 10 日 · 星期六</span>
+              <span>
+                {view === "bus"
+                  ? `数据读取：${busReadTimeText}（北京时间）`
+                  : "2026 年 10 月 10 日 · 星期六"}
+              </span>
             </div>
             <span className="meta-divider" />
             <button onClick={() => setDataOpen(true)} className="data-pill">
@@ -605,7 +628,7 @@ export default function CampusApp() {
                   </div>
                   <div className="estimate-note">
                     <Info size={14} />
-                    <span>耗时为演示估算，车辆状态尚未接入。</span>
+                    <span>耗时为演示估算；真实车辆状态请查看校园校巴。</span>
                   </div>
                 </section>
                 <div className="sidebar-bottom">

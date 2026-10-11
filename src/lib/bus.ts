@@ -236,8 +236,18 @@ export function normalizeFeedUrl(value: string): string {
   return parsed.href;
 }
 
+/** Explicit live links override a previously selected snapshot or remote feed. */
+export function initialFeedUrl(search: string, saved: string | null): string {
+  if (new URLSearchParams(search).get("live") === "1") return "/api/transit";
+  try {
+    return normalizeFeedUrl(saved ?? "");
+  } catch {
+    return "/data/whu-bus.json";
+  }
+}
+
 export function useTransitFeed() {
-  const [url, setUrl] = useState("/data/whu-bus.json");
+  const [url, setUrl] = useState<string | null>(null);
   const [state, setState] = useState<{
     snapshot: TransitSnapshot | null;
     error: string;
@@ -250,14 +260,18 @@ export function useTransitFeed() {
     now: Date.now(),
   });
   useEffect(() => {
+    let saved: string | null = null;
     try {
-      const saved = localStorage.getItem("luojia-transit-feed-url");
-      if (saved) setUrl(normalizeFeedUrl(saved));
+      saved = localStorage.getItem("luojia-transit-feed-url");
     } catch {
       /* Use the bundled snapshot if browser storage is unavailable. */
     }
+    setUrl(initialFeedUrl(window.location.search, saved));
   }, []);
   useEffect(() => {
+    // Resolve explicit live mode before making any request to a cached feed.
+    if (!url) return;
+    const feedUrl = url;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     let controller: AbortController;
@@ -266,7 +280,7 @@ export function useTransitFeed() {
       controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
       try {
-        const response = await fetch(url, {
+        const response = await fetch(feedUrl, {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -304,5 +318,5 @@ export function useTransitFeed() {
     }
     setUrl(next);
   }
-  return { ...state, url, configure };
+  return { ...state, url: url ?? "/data/whu-bus.json", configure };
 }
