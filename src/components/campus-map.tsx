@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import L from "leaflet";
 import {
+  Bus,
   Crosshair,
   Layers,
   LocateFixed,
@@ -31,6 +33,7 @@ const escapeHtml = (value: string) =>
   );
 
 const routeColors = { walk: "#24745d", bus: "#3978be", bike: "#159a9a" };
+const vehicleIcon = renderToStaticMarkup(<Bus size={18} aria-hidden="true" />);
 
 export default function CampusMap({
   route,
@@ -63,7 +66,10 @@ export default function CampusMap({
   const pickRef = useRef(onPick);
   const originPickRef = useRef(onOrigin);
   const [layersOpen, setLayersOpen] = useState(false);
-  const [showBus, setShowBus] = useState(true);
+  const [busLayerOverride, setBusLayerOverride] = useState<boolean | null>(
+    null,
+  );
+  const showBus = busLayerOverride ?? (view === "bus" || route?.mode === "bus");
   const [showIncidents, setShowIncidents] = useState(false);
   const [mapError, setMapError] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
@@ -159,11 +165,11 @@ export default function CampusMap({
         view === "route" &&
         (place.id === origin.id || place.id === destination.id);
       if (endpoint) return;
-      if (view === "route" && mapZoom < 16) return;
+      if (mapZoom < 16) return;
       const marker = L.marker([place.lat, place.lng], {
         icon: L.divIcon({
           className: "campus-poi",
-          html: `<span class="poi-dot"></span><span class="poi-name">${place.name}</span>`,
+          html: `<span class="poi-dot"></span>${mapZoom >= 17 ? `<span class="poi-name">${escapeHtml(place.name)}</span>` : ""}`,
           iconSize: [110, 28],
           iconAnchor: [5, 14],
         }),
@@ -175,7 +181,7 @@ export default function CampusMap({
     if (showBus) {
       if (busData?.path.length)
         L.polyline(busData.path, {
-          color: "#588bbd",
+          color: routeColors.bus,
           weight: 3,
           opacity: 0.55,
           dashArray: "6 8",
@@ -185,14 +191,14 @@ export default function CampusMap({
           L.marker([vehicle.lat, vehicle.lng], {
             icon: L.divIcon({
               className: "bus-marker",
-              html: `<span>${escapeHtml(vehicle.id)}</span>`,
-              iconSize: [56, 28],
-              iconAnchor: [28, 14],
+              html: `<span>${vehicleIcon}</span>`,
+              iconSize: [44, 44],
+              iconAnchor: [22, 22],
             }),
             title: `${busData.name} · ${busStatus} · 车辆 ${vehicle.id}`,
           })
             .bindPopup(
-              `${escapeHtml(busData.name)} · ${escapeHtml(busStatus)}<br>车辆 ${escapeHtml(vehicle.id)}<br>来源：bus.whu.edu.cn<br>${escapeHtml(busData.vehiclesFetchedAt ?? "暂无读取时间")}<br>坐标按推断转换，尚未实地核验`,
+              `${escapeHtml(busData.name)} · ${escapeHtml(busStatus)}<br>${escapeHtml(busData.stops[0].name)} → ${escapeHtml(busData.stops.at(-1)?.name ?? "")}<br>车辆 ${escapeHtml(vehicle.id)}<br>来源：bus.whu.edu.cn<br>${escapeHtml(busData.vehiclesFetchedAt ?? "暂无读取时间")}<br>坐标按推断转换，尚未实地核验`,
             )
             .addTo(layer);
         });
@@ -249,6 +255,7 @@ export default function CampusMap({
     const layer = routeRef.current;
     const map = mapRef.current;
     if (!layer || !map) return;
+    map.invalidateSize({ pan: false });
     layer.clearLayers();
     if (view !== "route" || !route) {
       const busPoints: [number, number][] = JSON.parse(busBoundsKey);
@@ -256,7 +263,7 @@ export default function CampusMap({
         view === "bus" && busPoints.length
           ? L.latLngBounds(busPoints)
           : L.latLngBounds(campusBounds);
-      map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16 });
+      map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16, animate: false });
       return;
     }
     L.polyline(route.points, {
@@ -287,13 +294,16 @@ export default function CampusMap({
           iconAnchor: [21, 21],
         }),
         title: place.name,
+        zIndexOffset: 1000,
       }).addTo(layer);
     });
     // Keep campus context visible even when the selected journey is short.
-    map.fitBounds(L.latLngBounds(route.points).pad(0.8), {
-      maxZoom: 16,
-      paddingTopLeft: [45, 100],
-      paddingBottomRight: [80, 50],
+    const compactMap = container.current!.clientWidth <= 760;
+    map.fitBounds(L.latLngBounds(route.points).pad(compactMap ? 0.15 : 0.8), {
+      animate: false,
+      maxZoom: compactMap ? 17 : 16,
+      paddingTopLeft: compactMap ? [42, 55] : [45, 100],
+      paddingBottomRight: compactMap ? [65, 65] : [80, 50],
     });
   }, [route, origin, destination, view, busBoundsKey, busLineId]);
 
@@ -454,7 +464,7 @@ export default function CampusMap({
             <input
               type="checkbox"
               checked={showBus}
-              onChange={(e) => setShowBus(e.target.checked)}
+              onChange={(e) => setBusLayerOverride(e.target.checked)}
             />
             校巴线路与车辆
           </label>
@@ -471,7 +481,7 @@ export default function CampusMap({
       <div className="map-legend">
         <span>
           <i className="legend-route" />
-          出行路线
+          步行
         </span>
         <span>
           <i className="legend-bus" />
@@ -479,7 +489,7 @@ export default function CampusMap({
         </span>
         <span>
           <i className="legend-bike" />
-          自行车路线
+          骑行
         </span>
         <span>
           <i className="legend-alert" />

@@ -82,6 +82,8 @@ test("shows real road steps and an optional external navigation link", async ({
   await page.goto("/");
   await expect(page.locator(".demo-status")).toHaveText("道路寻路");
   await expect(page.getByRole("button", { name: /全程步行/ })).toBeVisible();
+  if (test.info().project.name === "mobile")
+    await page.getByRole("button", { name: "全部方案", exact: true }).click();
   await page.locator(".road-steps summary").click();
   await expect(page.locator(".road-steps")).toContainText("沿");
   await expect(page.locator(".road-steps")).toContainText("入口需核实");
@@ -184,9 +186,9 @@ test("opens live bus links ahead of saved snapshots with sampled status and Beij
   });
   await page.goto("/?live=1&view=bus");
   await expect(
-    page.getByRole("heading", { name: "校巴，连接每一站" }),
+    page.getByRole("heading", { name: "校园校巴", level: 1 }),
   ).toBeVisible();
-  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
   await expect(page.locator(".demo-status")).toHaveText("校巴实采");
   const readTime = new Date(fixture.lines[0].vehiclesFetchedAt!).toLocaleString(
     "zh-CN",
@@ -205,7 +207,7 @@ test("opens live bus links ahead of saved snapshots with sampled status and Beij
   await page.getByRole("button", { name: "路线规划", exact: true }).click();
   await expect(page.locator(".demo-status")).toHaveText("道路寻路");
   await expect(page.locator(".planner-section").locator("..")).toContainText(
-    "真实车辆状态请查看校园校巴",
+    "校巴耗时未知",
   );
 });
 
@@ -216,12 +218,14 @@ test("renders the campus workspace and switches transport details", async ({
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "下一站，去哪里？" }),
+    page.getByRole("heading", { name: "校园路线", level: 1 }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /全程步行/ })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+  if (test.info().project.name === "mobile")
+    await page.getByRole("button", { name: "全部方案", exact: true }).click();
   await page.getByRole("button", { name: /自行车骑行/ }).click();
   await expect(
     page.getByRole("button", { name: /自行车骑行/ }),
@@ -287,13 +291,15 @@ test("navigates bus and filtered notices, then plans from an incident", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "校园校巴", exact: true }).click();
-  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
   await page.getByRole("combobox", { name: "校巴目标站次" }).selectOption("15");
   await expect(page.locator(".bus-arrival")).toContainText("6 站后");
   await expect(page.locator(".bus-arrival")).toContainText("11 站后");
   await expect(page.locator(".bus-arrival")).not.toContainText("模拟到站");
-  await page.getByRole("button", { name: "站点", exact: true }).click();
-  await expect(page.locator(".bus-stop small").first()).toBeVisible();
+  if (test.info().project.name === "desktop") {
+    await page.getByRole("button", { name: "站点", exact: true }).click();
+    await expect(page.locator(".bus-stop small").first()).toBeVisible();
+  }
   await page
     .getByRole("combobox", { name: "校巴线路与方向" })
     .selectOption("10486-56-1");
@@ -305,7 +311,7 @@ test("navigates bus and filtered notices, then plans from an incident", async ({
   await page.getByRole("button", { name: /工学部活动临时限行/ }).click();
   await page.getByRole("button", { name: "规划前往此处的路线" }).click();
   await expect(
-    page.getByRole("heading", { name: "下一站，去哪里？" }),
+    page.getByRole("heading", { name: "校园路线", level: 1 }),
   ).toBeVisible();
   await expect(page.locator(".journey-detail")).toContainText("工学部教学楼");
 });
@@ -330,7 +336,7 @@ test("marks old snapshots stale and keeps last good data after a failed refresh"
   failRefresh = true;
   await page.clock.fastForward(11000);
   await expect(page.locator(".bus-warning")).toContainText("503");
-  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
   await expect(page.locator(".source-line")).toContainText("历史快照");
 });
 
@@ -366,7 +372,7 @@ test("loads a configured data service and preserves the setting", async ({
   await page.reload();
   await expect.poll(() => requests).toBeGreaterThan(1);
   await page.getByRole("button", { name: "校园校巴", exact: true }).click();
-  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
 });
 
 test("preserves the map zoom when the same line refreshes vehicles", async ({
@@ -380,7 +386,7 @@ test("preserves the map zoom when the same line refreshes vehicles", async ({
   await page.clock.install();
   await page.goto("/");
   await page.getByRole("button", { name: "校园校巴", exact: true }).click();
-  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
   await expect(page.locator(".leaflet-proxy")).toHaveCount(1);
   await page.getByRole("button", { name: "放大地图", exact: true }).click();
   await page.clock.runFor(1000);
@@ -448,16 +454,34 @@ test("captures a complete desktop or mobile UI preview", async ({
     const label = document.createElement("div");
     label.textContent = "自动化测试数据 · 非实时校巴快照";
     label.style.cssText =
-      "position:fixed;bottom:0;left:0;right:0;background:#fff1c7;color:#5b4014;padding:8px;text-align:center;z-index:99999;font-size:12px";
-    document.body.append(label);
+      "background:#fff1c7;color:#5b4014;padding:8px;text-align:center;font-size:12px;margin-bottom:12px";
+    document.querySelector(".bus-results")!.prepend(label);
   });
+  await expect
+    .poll(
+      () =>
+        page
+          .locator(".leaflet-tile")
+          .evaluateAll(
+            (images) =>
+              images.length > 0 &&
+              images.every(
+                (image) =>
+                  image instanceof HTMLImageElement &&
+                  image.complete &&
+                  image.naturalWidth === 256,
+              ),
+          ),
+      { timeout: 45000 },
+    )
+    .toBe(true);
   await page.screenshot({
     path: `artifacts/bus-${testInfo.project.name}.png`,
     fullPage: true,
   });
   const bounds = await page.locator(".map-surface").boundingBox();
   expect(bounds?.width).toBeGreaterThan(280);
-  expect(bounds?.height).toBeGreaterThan(350);
+  expect(bounds?.height).toBeGreaterThanOrEqual(280);
 });
 
 test("selects a place by keyboard and rejects an identical endpoint", async ({
@@ -536,4 +560,87 @@ test("switches between a real street basemap and satellite imagery", async ({
     "src",
     /World_Light_Gray_Base/,
   );
+});
+
+test("keeps target stops compact and reveals vehicle details on demand", async ({
+  page,
+}) => {
+  await page.goto("/?view=bus");
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
+  await page.getByRole("combobox", { name: "校巴目标站次" }).selectOption("15");
+  await expect(page.locator(".target-stop")).toContainText("田园食堂");
+  await expect(page.locator(".bus-stop").first()).toContainText("13.");
+  await page.getByRole("button", { name: "全部站点", exact: true }).click();
+  await expect(page.locator(".bus-stop")).toHaveCount(20);
+  await page.getByRole("button", { name: "收起站点", exact: true }).click();
+  await expect(page.locator(".bus-stop")).toHaveCount(5);
+  await expect(page.locator(".bus-marker").first()).toBeVisible();
+  await expect(page.locator(".bus-marker").first()).not.toContainText(
+    "vehicle-",
+  );
+  await page.locator(".bus-marker").first().click();
+  await expect(page.locator(".leaflet-popup-content")).toContainText(
+    "车辆 vehicle-",
+  );
+  await expect(page.locator(".leaflet-popup-content")).toContainText(
+    "来源：bus.whu.edu.cn",
+  );
+});
+
+test("puts the mobile map before results with readable and usable controls", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile");
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/");
+    await expect(page.locator(".route-option.selected")).toBeVisible();
+    await expect
+      .poll(async () => {
+        const origin = await page.locator(".origin-marker").boundingBox();
+        const destination = await page
+          .locator(".destination-marker")
+          .boundingBox();
+        return Math.abs((origin?.x ?? 0) - (destination?.x ?? 0));
+      })
+      .toBeGreaterThan(60);
+    const map = await page.getByTestId("campus-map").boundingBox();
+    const results = await page.locator(".route-section").boundingBox();
+    expect(map!.y).toBeLessThan(360);
+    expect(map!.y + map!.height).toBeLessThanOrEqual(results!.y + 1);
+    await expect(page.locator(".route-option:visible")).toHaveCount(1);
+    await page.getByRole("button", { name: "全部方案", exact: true }).click();
+    expect(await page.locator(".route-option:visible").count()).toBeGreaterThan(
+      1,
+    );
+    await page.getByRole("button", { name: "收起方案", exact: true }).click();
+    await expect(page.locator(".route-option:visible")).toHaveCount(1);
+    expect(
+      await page
+        .locator("body")
+        .evaluate((el) => el.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    expect(
+      await page
+        .getByRole("combobox", { name: "目的地" })
+        .evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
+    ).toBeGreaterThanOrEqual(14);
+    const zoom = await page
+      .getByRole("button", { name: "放大地图", exact: true })
+      .boundingBox();
+    expect(zoom!.width).toBeGreaterThanOrEqual(44);
+    expect(zoom!.height).toBeGreaterThanOrEqual(44);
+    await page.getByRole("button", { name: "校园校巴", exact: true }).click();
+    const busMap = await page.getByTestId("campus-map").boundingBox();
+    const busResults = await page.locator(".bus-results").boundingBox();
+    expect(busMap!.y).toBeLessThan(360);
+    expect(busMap!.y + busMap!.height).toBeLessThanOrEqual(busResults!.y + 1);
+    await page
+      .getByRole("button", { name: "打开出行问答", exact: true })
+      .click();
+    await expect(page.getByRole("dialog", { name: "出行问答" })).toBeVisible();
+    await page
+      .getByRole("button", { name: "关闭出行问答", exact: true })
+      .click();
+  }
 });
