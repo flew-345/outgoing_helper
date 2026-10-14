@@ -6,6 +6,8 @@ const config = tseslint.config(
   {
     ignores: [
       ".next/**",
+      ".open-next/**",
+      ".wrangler/**",
       "node_modules/**",
       "test-results/**",
       "playwright-report/**",

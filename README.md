@@ -146,6 +146,24 @@ npm run package:team
 
 已有 `out/` 时，`npm run preview` 默认在端口 4173 预览并自动打开浏览器。静态导出使用上面的构建流程；普通 Next.js 部署可在未设置 `TRANSIT_STATIC_EXPORT` 时运行 `npm run build` 和 `npm run start`，但不会因此自动获得校巴 API。
 
+## Cloudflare Workers 部署
+
+仓库已配置 OpenNext Cloudflare 适配器。Worker 名称和 `WORKER_SELF_REFERENCE` 的目标均为 `whu-going`；更名时必须同时更新 `wrangler.json` 中的这两项及 Cloudflare 项目名称。
+
+连接 GitHub 仓库后，在 Cloudflare Workers 的构建设置中填写：
+
+| 设置     | 值                                 |
+| -------- | ---------------------------------- |
+| 根目录   | 仓库根目录                         |
+| 构建命令 | `npm run build:cloudflare`         |
+| 部署命令 | `npx opennextjs-cloudflare deploy` |
+
+构建环境不要设置 `TRANSIT_STATIC_EXPORT=1`。`npm run build` 仍生成普通 Next.js 输出；Cloudflare 需要 `build:cloudflare` 生成的 `.open-next/worker.js` 和 `.open-next/assets`。Next.js 固定为 `16.3.8`：当前适配器无法处理 `16.4.0` 的 `preview-props.json`，会导致首页返回 500。适配器和 Wrangler 也已锁定版本，构建时无需自动迁移项目。
+
+本地可运行 `npm run preview:cloudflare` 预览 Worker，或在 Cloudflare 授权后运行 `npm run deploy` 构建并发布。OpenNext 推荐在 Linux 或 WSL 下构建；Windows 原生环境的兼容性有限。现有静态预览和团队打包命令仍可使用。
+
+当前页面不使用 ISR、服务端数据缓存或 Next.js 图片优化，因此不配置 R2 缓存桶或 Images 服务。以后引入这些功能时需补齐对应绑定。校巴采集器仍为独立 Python 服务；发布网页不会自动启动采集器或提供实时 `/api/transit`。
+
 ## 技术栈与目录
 
 Next.js 16 App Router、React 19、TypeScript 严格模式、Tailwind CSS 4、Leaflet；Python 标准库与 cryptography；Vitest 与 Playwright。
