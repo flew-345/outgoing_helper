@@ -16,11 +16,23 @@ export type ReadUpstream = (
 export const readUpstream: ReadUpstream = async (url, signal) => {
   if (new URL(url).origin !== TRANSIT_ORIGIN)
     throw new Error("校巴资源地址发生变化");
+  const resource = url.includes("/interface/")
+    ? "data"
+    : url.endsWith("index.html")
+      ? "index"
+      : "script";
   const response = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0", Accept: "*/*" },
     redirect: "manual",
     cache: "no-store",
     signal,
+  }).catch((error: unknown) => {
+    console.warn(
+      "Transit resource unavailable",
+      resource,
+      error instanceof Error ? error.message : "unknown",
+    );
+    throw error;
   });
   if (response.status >= 300 && response.status < 400)
     throw new Error("校巴上游发生重定向");

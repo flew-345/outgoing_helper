@@ -187,7 +187,7 @@ export function createTransitService(
       refreshedAt = Date.parse(snapshot.fetchedAt);
       return snapshot;
     }
-    const signal = AbortSignal.timeout(8000);
+    const signal = AbortSignal.timeout(20_000);
     const errors: string[] = [];
     const lines = await Promise.all(
       LINE_IDS.map(async (id) => {

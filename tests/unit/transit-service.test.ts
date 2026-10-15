@@ -42,6 +42,7 @@ describe("automatic transit service", () => {
     vi.restoreAllMocks();
   });
   it("coalesces visitors and caches metadata while polling vehicles", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
     let now = Date.parse("2026-10-15T01:00:00Z");
     const client = clientFixture();
     const service = createTransitService(client, () => now);
@@ -54,6 +55,7 @@ describe("automatic transit service", () => {
     );
     expect(concurrent).toEqual(first);
     expect(client.stations).toHaveBeenCalledTimes(4);
+    expect(timeout).toHaveBeenCalledWith(20_000);
     expect(client.vehicles).toHaveBeenCalledTimes(4);
     expect(first.lines[0].stops[0].occurrenceId).not.toBe(
       first.lines[0].stops[1].occurrenceId,
