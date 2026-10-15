@@ -74,7 +74,12 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/{data/whu-bus.json,api/transit}", (route) =>
     route.fulfill({ json: transitFixture() }),
   );
+  await page.addInitScript(() => {
+    if (localStorage.getItem("luojia-skip-auto-auth") !== "true")
+      localStorage.setItem("luojia-authenticated", "true");
+  });
 });
+
 test("requires the internal account before showing the campus workspace", async ({
   page,
 }) => {
@@ -559,4 +564,3 @@ test("switches between a real street basemap and satellite imagery", async ({
     /World_Light_Gray_Base/,
   );
 });
-
