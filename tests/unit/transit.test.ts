@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   arrivalsAt,
   initialFeedUrl,
@@ -67,14 +67,14 @@ describe("transit import boundary", () => {
     expect(initialFeedUrl("?live=1", "javascript:alert(1)")).toBe(
       "/api/transit",
     );
-    expect(initialFeedUrl("?live=0", "/data/old.json")).toBe("/data/old.json");
+    expect(initialFeedUrl("?live=0", "/data/old.json")).toBe(
+      "/data/whu-bus.json",
+    );
     expect(
       initialFeedUrl("?view=bus", "http://127.0.0.1:8766/api/transit"),
     ).toBe("http://127.0.0.1:8766/api/transit");
-    expect(initialFeedUrl("", null)).toBe("/data/whu-bus.json");
-    expect(initialFeedUrl("", "javascript:alert(1)")).toBe(
-      "/data/whu-bus.json",
-    );
+    expect(initialFeedUrl("", null)).toBe("/api/transit");
+    expect(initialFeedUrl("", "javascript:alert(1)")).toBe("/api/transit");
   });
   it("preserves repeated physical stops as separate occurrences", () => {
     const value = parseTransitSnapshot(fixture());
@@ -103,7 +103,7 @@ describe("transit import boundary", () => {
     expect(() =>
       parseTransitSnapshot({ ...fixture(), schemaVersion: 2 }),
     ).toThrow();
-    expect(normalizeFeedUrl("")).toBe("/data/whu-bus.json");
+    expect(normalizeFeedUrl("")).toBe("/api/transit");
     expect(normalizeFeedUrl("http://127.0.0.1:8766/api/transit")).toBe(
       "http://127.0.0.1:8766/api/transit",
     );
@@ -113,6 +113,31 @@ describe("transit import boundary", () => {
       "https://user:pass@example.com/feed",
     ])
       expect(() => normalizeFeedUrl(input)).toThrow();
+  });
+  it("migrates bundled snapshots and public-site loopback addresses to the automatic feed", () => {
+    expect(initialFeedUrl("", "/data/whu-bus.json")).toBe("/api/transit");
+    for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+      expect(
+        initialFeedUrl(
+          "",
+          `http://${host}:8766/api/transit`,
+          "whu-going.example.com",
+        ),
+      ).toBe("/api/transit");
+    }
+    expect(
+      initialFeedUrl("", "https://example.com/feed", "whu-going.example.com"),
+    ).toBe("https://example.com/feed");
+  });
+  it("keeps the portable static package usable without a server API", () => {
+    vi.stubEnv("NEXT_PUBLIC_TRANSIT_STATIC_EXPORT", "1");
+    try {
+      expect(initialFeedUrl("", null)).toBe("/data/whu-bus.json");
+      expect(normalizeFeedUrl("")).toBe("/data/whu-bus.json");
+      expect(initialFeedUrl("?live=1", null)).toBe("/api/transit");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

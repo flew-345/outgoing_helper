@@ -2,7 +2,7 @@
 
 面向武汉大学校园的出行助手，提供地图选点、步行与自行车道路规划，以及校巴线路、车辆位置和剩余站数查询。当前版本为 `0.1.0`；本文按 2026-10-11 的源码整理。
 
-自有路线在浏览器中基于 OSM 路网计算，不需要高德 Key。校巴由独立 Python 服务采集校方 H5 数据响应，再通过 JSON 接入网页。
+自有路线在浏览器中基于 OSM 路网计算，不需要高德 Key。校巴默认由网站服务端自动采集校方 H5 数据，通过同源 `/api/transit` 接入，无需单独启动 Python 或填写接口地址。
 
 ## 文档导航
 
@@ -34,23 +34,24 @@
 
 ```powershell
 npm ci
-python -m pip install -r scripts/transit/requirements.txt
 npm run dev
 ```
 
-打开 [开发页面](http://127.0.0.1:3000)。端口占用时使用 `npm run dev -- --port 3001`。只开发前端可跳过 Python 安装。
+打开 [开发页面](http://127.0.0.1:3000)。端口占用时使用 `npm run dev -- --port 3001`。只有使用独立采集脚本、离线捕获时才需要 `python -m pip install -r scripts/transit/requirements.txt`。
 
-默认网页读取 `public/data/whu-bus.json` 的随包快照。每 10 秒读取静态文件不会生成新车辆信息，车辆读取时间超过 30 秒会标为过期。
+开发服务、普通 Next.js 服务及 Cloudflare 部署默认读取同源 `/api/transit`。打开网页即开始轮询，无人访问时不持续请求校方。浏览器每 10 秒读取一次；服务端合并并发请求、复用最近 10 秒的结果，站点和轨迹缓存 6 小时。Cloudflare 还使用同一边缘节点的 Cache API 共享最近快照，无需新增 R2、KV 或外部服务器；不同节点可能独立采集。
 
-开发模式接入实时数据：另开终端运行下列命令，在网页“数据说明 → 校巴数据地址”填写 `http://127.0.0.1:8766/api/transit` 并应用。
+车辆读取时间超过 30 秒会标为过期。上游失败保留上次成功车辆及其时间，首次完全失败返回 503，并在后续轮询重试；不会自动拿随包旧快照冒充实采。`?live=0` 可显式查看随包快照，`?live=1` 显式选择自动接口。线上访问会迁移旧的默认快照或本机采集地址；自定义远端地址仍保留，数据地址留空恢复默认。
+
+仍可按需使用独立 Python 采集器：
 
 ```powershell
 python scripts/transit/collector.py --serve --no-persist
 ```
 
-`npm run dev` 没有 `/api/transit` 同源代理；下面的 `?live=1` 入口须配合带 `--feed` 的预览服务使用。
+这只是调试、捕获的可选方式，网站自动接口无需此进程。
 
-## 运行实际采集网页
+## 静态包接入独立采集器（可选）
 
 先构建静态页面：
 
@@ -76,15 +77,17 @@ node scripts/preview-server.mjs --root out --port 4174 --feed http://127.0.0.1:8
 
 检查读取时间是否持续变化，并留意过期和错误提示；HTTP 200 本身不能证明车辆数据新鲜。`--no-persist` 从内存提供新快照，避免持续替换磁盘文件。两个终端均可用 Ctrl+C 停止。
 
-当前链路不依赖手机、USB 调试或 Yakit，也不携带 Cookie 或 Authorization。遇到登录重定向或协议变化会报错，不处理登录绕过。服务仅监听本机；手机上的 `127.0.0.1` 指手机自身，不能直接访问电脑服务。公开部署与手机访问所需的同源 HTTPS 服务尚未实现。
+当前链路不依赖手机、USB 调试或 Yakit，也不携带 Cookie 或 Authorization。遇到登录重定向或协议变化会报错。Python 服务仅监听本机；手机上的 `127.0.0.1` 指手机自身，不能访问电脑服务。公开网站应使用默认同源 HTTPS 自动接口。
 
 ## 数据链路
 
 ```text
 bus.whu.edu.cn H5 响应
-  → upstream.py 请求/解码 → collector.py 校验/转换/状态
-  → schemaVersion 1 JSON / 本机 /api/transit
+  → transit-upstream.ts 请求/解码 → transit-service.ts 校验/转换/缓存
+  → schemaVersion 1 JSON / 同源 /api/transit（Cloudflare 或 Next.js）
   → bus.ts 校验/轮询/站数 → 校巴页面与单次乘车候选
+
+独立采集/留存：upstream.py → collector.py → 本机 API 或磁盘快照
 
 OSM Overpass（人工刷新）
   → fetch-roads.py → campus-roads.json
@@ -144,11 +147,11 @@ npm run package:team
 
 免安装包的构建目前需要 **Windows x64 + Node.js 24.16.0**，项目只附有该运行时版本的许可证文件。`releases/` 会生成预览 ZIP、源码 ZIP 和 SHA256 校验文件。预览包包含 Node.js、静态页面和数据快照，未包含 Python；持续采集仍需独立启动采集器。
 
-已有 `out/` 时，`npm run preview` 默认在端口 4173 预览并自动打开浏览器。静态导出使用上面的构建流程；普通 Next.js 部署可在未设置 `TRANSIT_STATIC_EXPORT` 时运行 `npm run build` 和 `npm run start`，但不会因此自动获得校巴 API。
+已有 `out/` 时，`npm run preview` 默认在端口 4173 预览并自动打开浏览器。静态导出使用上面的构建流程，只包含随包快照；普通 Next.js 部署可在未设置 `TRANSIT_STATIC_EXPORT` 时运行 `npm run build` 和 `npm run start`，自动提供校巴 API。
 
 ## Cloudflare Workers 部署
 
-仓库已配置 OpenNext Cloudflare 适配器。Worker 名称和 `WORKER_SELF_REFERENCE` 的目标均为 `whu-going`；更名时必须同时更新 `wrangler.json` 中的这两项及 Cloudflare 项目名称。
+仓库已配置 OpenNext Cloudflare 适配器。Worker 名称和 `WORKER_SELF_REFERENCE` 的目标均为 `whu-go`，对应公开地址 https://whu-go.2195135330.workers.dev/；更名时必须同时更新 `wrangler.json` 中的这两项及 Cloudflare 项目名称。
 
 连接 GitHub 仓库后，在 Cloudflare Workers 的构建设置中填写：
 
@@ -162,7 +165,9 @@ npm run package:team
 
 本地可运行 `npm run preview:cloudflare` 预览 Worker，或在 Cloudflare 授权后运行 `npm run deploy` 构建并发布。OpenNext 推荐在 Linux 或 WSL 下构建；Windows 原生环境的兼容性有限。现有静态预览和团队打包命令仍可使用。
 
-当前页面不使用 ISR、服务端数据缓存或 Next.js 图片优化，因此不配置 R2 缓存桶或 Images 服务。以后引入这些功能时需补齐对应绑定。校巴采集器仍为独立 Python 服务；发布网页不会自动启动采集器或提供实时 `/api/transit`。
+当前页面不使用 ISR、Next.js 增量缓存或图片优化，因此不配置 R2 缓存桶或 Images 服务。校巴自动接口使用内存及 Cloudflare Cache API，随网站一起部署；首次访问会加载校方脚本和线路数据，校方不可达时显示暂不可用并自动重试。Cloudflare 运行环境访问上游的结果应在部署后检查 `/api/transit` 中的状态及时间。
+
+`route.live.ts` 是网站服务端路由，`next.config.ts` 通过 `pageExtensions` 在普通构建时启用、静态导出时排除它，同时设置浏览器默认数据源。不要将它改名为 `route.ts`，否则会影响静态预览包构建。
 
 ## 技术栈与目录
 

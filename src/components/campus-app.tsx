@@ -1288,7 +1288,6 @@ export default function CampusApp() {
                 placeholder={feed.url}
                 onChange={(event) => setFeedAddress(event.target.value)}
               />
-              <small>留空恢复随包快照；填写采集服务地址可持续更新。</small>
               <button type="submit" className="search-button">
                 应用数据地址
               </button>

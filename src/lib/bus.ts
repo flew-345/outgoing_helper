@@ -223,8 +223,14 @@ export function arrivalsAt(
     }));
 }
 
+export function defaultTransitFeed(): string {
+  return process.env.NEXT_PUBLIC_TRANSIT_STATIC_EXPORT === "1"
+    ? "/data/whu-bus.json"
+    : "/api/transit";
+}
+
 export function normalizeFeedUrl(value: string): string {
-  const url = value.trim() || "/data/whu-bus.json";
+  const url = value.trim() || defaultTransitFeed();
   if (url.startsWith("/") && !url.startsWith("//")) return url;
   const parsed = new URL(url);
   if (
@@ -236,13 +242,25 @@ export function normalizeFeedUrl(value: string): string {
   return parsed.href;
 }
 
-/** Explicit live links override a previously selected snapshot or remote feed. */
-export function initialFeedUrl(search: string, saved: string | null): string {
-  if (new URLSearchParams(search).get("live") === "1") return "/api/transit";
+/** Migrate old snapshot/loopback preferences when opening the public site. */
+export function initialFeedUrl(
+  search: string,
+  saved: string | null,
+  hostname = "localhost",
+): string {
+  const mode = new URLSearchParams(search).get("live");
+  if (mode === "1") return "/api/transit";
+  if (mode === "0") return "/data/whu-bus.json";
   try {
+    if (saved === "/data/whu-bus.json") return defaultTransitFeed();
+    if (saved && !["localhost", "127.0.0.1", "[::1]"].includes(hostname)) {
+      const host = new URL(saved, "https://transit.invalid").hostname;
+      if (["localhost", "127.0.0.1", "[::1]"].includes(host))
+        return defaultTransitFeed();
+    }
     return normalizeFeedUrl(saved ?? "");
   } catch {
-    return "/data/whu-bus.json";
+    return defaultTransitFeed();
   }
 }
 
@@ -264,9 +282,11 @@ export function useTransitFeed() {
     try {
       saved = localStorage.getItem("luojia-transit-feed-url");
     } catch {
-      /* Use the bundled snapshot if browser storage is unavailable. */
+      /* Use the default feed if browser storage is unavailable. */
     }
-    setUrl(initialFeedUrl(window.location.search, saved));
+    setUrl(
+      initialFeedUrl(window.location.search, saved, window.location.hostname),
+    );
   }, []);
   useEffect(() => {
     // Resolve explicit live mode before making any request to a cached feed.
@@ -284,7 +304,10 @@ export function useTransitFeed() {
           cache: "no-store",
           signal: controller.signal,
         });
-        if (!response.ok) throw new Error(`数据服务返回 ${response.status}`);
+        if (!response.ok)
+          throw new Error(
+            `校巴服务暂时不可用（${response.status}），将自动重试`,
+          );
         const snapshot = parseTransitSnapshot(await response.json());
         if (!stopped)
           setState({ snapshot, error: "", loading: false, now: Date.now() });
@@ -318,5 +341,5 @@ export function useTransitFeed() {
     }
     setUrl(next);
   }
-  return { ...state, url: url ?? "/data/whu-bus.json", configure };
+  return { ...state, url: url ?? defaultTransitFeed(), configure };
 }

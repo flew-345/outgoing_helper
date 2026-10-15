@@ -8,7 +8,7 @@ const config = JSON.parse(readProjectFile("wrangler.json"));
 
 describe("Cloudflare deployment", () => {
   it("binds the worker to its own deployment name", () => {
-    expect(config.name).toBe("whu-going");
+    expect(config.name).toBe("whu-go");
     expect(config.services).toEqual([
       { binding: "WORKER_SELF_REFERENCE", service: config.name },
     ]);

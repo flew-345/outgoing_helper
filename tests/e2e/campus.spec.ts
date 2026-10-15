@@ -71,7 +71,7 @@ function transitFixture(): TransitSnapshot {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/data/whu-bus.json", (route) =>
+  await page.route("**/{data/whu-bus.json,api/transit}", (route) =>
     route.fulfill({ json: transitFixture() }),
   );
 });
@@ -339,7 +339,7 @@ test("marks old snapshots stale and keeps last good data after a failed refresh"
   fixture.fetchedAt = new Date(Date.now() - 120000).toISOString();
   for (const line of fixture.lines) line.vehiclesFetchedAt = fixture.fetchedAt;
   let failRefresh = false;
-  await page.route("**/data/whu-bus.json", (route) =>
+  await page.route("**/{data/whu-bus.json,api/transit}", (route) =>
     failRefresh
       ? route.fulfill({ status: 503 })
       : route.fulfill({ json: fixture }),
@@ -359,7 +359,7 @@ test("marks old snapshots stale and keeps last good data after a failed refresh"
 test("shows unavailable data without simulated buses when import fails", async ({
   page,
 }) => {
-  await page.route("**/data/whu-bus.json", (route) =>
+  await page.route("**/{data/whu-bus.json,api/transit}", (route) =>
     route.fulfill({ json: { schemaVersion: 999 } }),
   );
   await page.goto("/");
@@ -395,7 +395,7 @@ test("preserves the map zoom when the same line refreshes vehicles", async ({
   page,
 }) => {
   let requests = 0;
-  await page.route("**/data/whu-bus.json", (route) => {
+  await page.route("**/{data/whu-bus.json,api/transit}", (route) => {
     requests++;
     return route.fulfill({ json: transitFixture() });
   });
