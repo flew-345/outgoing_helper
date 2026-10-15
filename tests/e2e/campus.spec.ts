@@ -75,6 +75,28 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({ json: transitFixture() }),
   );
 });
+test("requires the internal account before showing the campus workspace", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.evaluate(() => {
+    localStorage.setItem("luojia-skip-auto-auth", "true");
+    localStorage.removeItem("luojia-authenticated");
+  });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "登录工作台" })).toBeVisible();
+  await page.getByLabel("用户名").fill("admin");
+  await page.getByLabel("密码").fill("wrong-password");
+  await page.getByRole("button", { name: "登录" }).click();
+  await expect(
+    page.getByText("用户名或密码不正确，请重试。", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("密码").fill("password123");
+  await page.getByRole("button", { name: "登录" }).click();
+  await expect(
+    page.getByRole("heading", { name: "下一站，去哪里？" }),
+  ).toBeVisible();
+});
 
 test("shows real road steps and an optional external navigation link", async ({
   page,
@@ -537,3 +559,4 @@ test("switches between a real street basemap and satellite imagery", async ({
     /World_Light_Gray_Base/,
   );
 });
+
