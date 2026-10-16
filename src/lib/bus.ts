@@ -298,7 +298,7 @@ export function useTransitFeed() {
     setState({ snapshot: null, error: "", loading: true, now: Date.now() });
     async function refresh() {
       controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
+      const timeout = setTimeout(() => controller.abort(), 25000);
       try {
         const response = await fetch(feedUrl, {
           cache: "no-store",

@@ -46,6 +46,28 @@ test("automatically connects and refreshes without a live link or manual feed se
   expect(snapshotRequests).toBe(0);
 });
 
+test("allows a slow first upstream connection to finish before the browser timeout", async ({
+  page,
+}) => {
+  let release: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route("**/api/transit", async (route) => {
+    requested = true;
+    await ready;
+    await route.fulfill({ json: snapshot() });
+  });
+  await page.clock.install();
+  await page.goto("/?view=bus");
+  await expect.poll(() => requested).toBe(true);
+  await page.clock.fastForward(21_000);
+  release();
+  await expect(page.locator(".demo-status")).toHaveText("校巴实采");
+  await expect(page.locator(".bus-stop")).toHaveCount(20);
+});
+
 test("recovers after a cold failure and preserves successful data during later failures", async ({
   page,
 }) => {
